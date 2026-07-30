@@ -1,0 +1,767 @@
+<!DOCTYPE html>
+<html lang="zh-CN" class="light" data-theme="light">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>前台对话</title>
+    <style id="theme-vars">
+/* ============================================
+   智能问答助手系统 — Brand CSS
+   Professional Indigo Tech SaaS
+   ============================================ */
+
+/* ---- Root Tokens ---- */
+:root {
+  /* Primary — Indigo */
+  --qa-primary-50:  #eef2ff;
+  --qa-primary-100: #e0e7ff;
+  --qa-primary-200: #c7d2fe;
+  --qa-primary-300: #a5b4fc;
+  --qa-primary-400: #818cf8;
+  --qa-primary-500: #6366f1;
+  --qa-primary-600: #4f46e5;
+  --qa-primary-700: #4338ca;
+  --qa-primary-800: #3730a3;
+  --qa-primary-900: #312e81;
+
+  /* Neutral scale */
+  --qa-neutral-0:   #ffffff;
+  --qa-neutral-50:  #f8fafc;
+  --qa-neutral-100: #f1f5f9;
+  --qa-neutral-200: #e2e8f0;
+  --qa-neutral-300: #cbd5e1;
+  --qa-neutral-400: #94a3b8;
+  --qa-neutral-500: #64748b;
+  --qa-neutral-600: #475569;
+  --qa-neutral-700: #334155;
+  --qa-neutral-800: #1e293b;
+  --qa-neutral-900: #0f172a;
+
+  /* State colors */
+  --state-success: #10b981;
+  --state-success-soft: #d1fae5;
+  --state-warning: #f59e0b;
+  --state-warning-soft: #fef3c7;
+  --state-error: #ef4444;
+  --state-error-soft: #fee2e2;
+  --state-info: #3b82f6;
+  --state-info-soft: #dbeafe;
+
+  /* Semantic aliases — light mode */
+  --qa-background: #ffffff;
+  --qa-foreground: #0f172a;
+  --qa-card: #ffffff;
+  --qa-card-foreground: #0f172a;
+  --qa-popover: #ffffff;
+  --qa-popover-foreground: #0f172a;
+  --qa-primary: #4f46e5;
+  --qa-primary-foreground: #ffffff;
+  --qa-muted: #f1f5f9;
+  --qa-muted-foreground: #64748b;
+  --qa-border: #e2e8f0;
+  --qa-input: #e2e8f0;
+  --qa-ring: #6366f1;
+
+  /* Radius */
+  --qa-radius-small: 4px;
+  --qa-radius-medium: 8px;
+  --qa-radius-large: 12px;
+  --radius-sm: 4px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --radius-full: 9999px;
+
+  /* Typography */
+  --qa-font-sans: "Inter", "PingFang SC", "Microsoft YaHei", "Noto Sans SC", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --qa-font-mono: "JetBrains Mono", "Fira Code", "Cascadia Code", Consolas, monospace;
+}
+
+/* ---- Dark mode aliases ---- */
+.dark {
+  --qa-background: #0f172a;
+  --qa-foreground: #f1f5f9;
+  --qa-card: #1e293b;
+  --qa-card-foreground: #f1f5f9;
+  --qa-popover: #1e293b;
+  --qa-popover-foreground: #f1f5f9;
+  --qa-primary: #6366f1;
+  --qa-primary-foreground: #ffffff;
+  --qa-muted: #334155;
+  --qa-muted-foreground: #94a3b8;
+  --qa-border: #334155;
+  --qa-input: #334155;
+  --qa-ring: #818cf8;
+}
+
+/* ---- Typography classes ---- */
+.font-sans { font-family: var(--qa-font-sans); }
+.font-mono { font-family: var(--qa-font-mono); }
+
+.text-display { font-size: 28px; font-weight: 700; line-height: 1.3; letter-spacing: -0.02em; }
+.text-heading { font-size: 20px; font-weight: 600; line-height: 1.4; letter-spacing: -0.01em; }
+.text-subheading { font-size: 16px; font-weight: 600; line-height: 1.5; }
+.text-body { font-size: 14px; font-weight: 400; line-height: 1.6; }
+.text-small { font-size: 13px; font-weight: 400; line-height: 1.5; }
+.text-caption { font-size: 12px; font-weight: 400; line-height: 1.4; color: var(--qa-muted-foreground); }
+.text-mono-sm { font-family: var(--qa-font-mono); font-size: 13px; line-height: 1.5; }
+
+/* ---- Base ---- */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  font-family: var(--qa-font-sans);
+  font-size: 14px;
+  line-height: 1.6;
+  color: var(--qa-foreground);
+  background: var(--qa-background);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+    </style>
+    <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4.3.1/dist/index.global.js"></script>
+    <script src="https://unpkg.com/lucide@1.8.0/dist/umd/lucide.min.js"></script>
+    <style type="text/tailwindcss">
+  @theme inline {
+    --color-background: var(--qa-background);
+    --color-foreground: var(--qa-foreground);
+    --color-card: var(--qa-card);
+    --color-card-foreground: var(--qa-card-foreground);
+    --color-popover: var(--qa-popover);
+    --color-popover-foreground: var(--qa-popover-foreground);
+    --color-primary: var(--qa-primary);
+    --color-primary-foreground: var(--qa-primary-foreground);
+    --color-muted: var(--qa-muted);
+    --color-muted-foreground: var(--qa-muted-foreground);
+    --color-border: var(--qa-border);
+    --color-input: var(--qa-input);
+    --color-ring: var(--qa-ring);
+    --radius-sm: var(--qa-radius-small);
+    --radius-md: var(--qa-radius-medium);
+    --radius-lg: var(--qa-radius-large);
+  }
+  @layer base {
+    body { background: var(--qa-background); color: var(--qa-foreground); }
+    td, th { @apply break-words; word-break: break-all; word-break: auto-phrase; }
+    th { @apply whitespace-nowrap; }
+  }
+    </style>
+    <style id="semantic-token-fallback">
+      .bg-background { background-color: var(--qa-background); }
+      .text-background { color: var(--qa-background); }
+      .border-background { border-color: var(--qa-background); }
+      .ring-background { --tw-ring-color: var(--qa-background); }
+      .bg-foreground { background-color: var(--qa-foreground); }
+      .text-foreground { color: var(--qa-foreground); }
+      .border-foreground { border-color: var(--qa-foreground); }
+      .ring-foreground { --tw-ring-color: var(--qa-foreground); }
+      .bg-card { background-color: var(--qa-card); }
+      .text-card { color: var(--qa-card); }
+      .border-card { border-color: var(--qa-card); }
+      .ring-card { --tw-ring-color: var(--qa-card); }
+      .bg-card-foreground { background-color: var(--qa-card-foreground); }
+      .text-card-foreground { color: var(--qa-card-foreground); }
+      .border-card-foreground { border-color: var(--qa-card-foreground); }
+      .ring-card-foreground { --tw-ring-color: var(--qa-card-foreground); }
+      .bg-popover { background-color: var(--qa-popover); }
+      .text-popover { color: var(--qa-popover); }
+      .border-popover { border-color: var(--qa-popover); }
+      .ring-popover { --tw-ring-color: var(--qa-popover); }
+      .bg-popover-foreground { background-color: var(--qa-popover-foreground); }
+      .text-popover-foreground { color: var(--qa-popover-foreground); }
+      .border-popover-foreground { border-color: var(--qa-popover-foreground); }
+      .ring-popover-foreground { --tw-ring-color: var(--qa-popover-foreground); }
+      .bg-primary { background-color: var(--qa-primary); }
+      .text-primary { color: var(--qa-primary); }
+      .border-primary { border-color: var(--qa-primary); }
+      .ring-primary { --tw-ring-color: var(--qa-primary); }
+      .bg-primary-foreground { background-color: var(--qa-primary-foreground); }
+      .text-primary-foreground { color: var(--qa-primary-foreground); }
+      .border-primary-foreground { border-color: var(--qa-primary-foreground); }
+      .ring-primary-foreground { --tw-ring-color: var(--qa-primary-foreground); }
+      .bg-muted { background-color: var(--qa-muted); }
+      .text-muted { color: var(--qa-muted); }
+      .border-muted { border-color: var(--qa-muted); }
+      .ring-muted { --tw-ring-color: var(--qa-muted); }
+      .bg-muted-foreground { background-color: var(--qa-muted-foreground); }
+      .text-muted-foreground { color: var(--qa-muted-foreground); }
+      .border-muted-foreground { border-color: var(--qa-muted-foreground); }
+      .ring-muted-foreground { --tw-ring-color: var(--qa-muted-foreground); }
+      .bg-border { background-color: var(--qa-border); }
+      .text-border { color: var(--qa-border); }
+      .border-border { border-color: var(--qa-border); }
+      .ring-border { --tw-ring-color: var(--qa-border); }
+      .bg-input { background-color: var(--qa-input); }
+      .text-input { color: var(--qa-input); }
+      .border-input { border-color: var(--qa-input); }
+      .ring-input { --tw-ring-color: var(--qa-input); }
+      .bg-ring { background-color: var(--qa-ring); }
+      .text-ring { color: var(--qa-ring); }
+      .border-ring { border-color: var(--qa-ring); }
+      .ring-ring { --tw-ring-color: var(--qa-ring); }
+    </style>
+    <style>
+      .no-scrollbar::-webkit-scrollbar { display: none; }
+      .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+      [data-icon] {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        -webkit-mask-size: contain;
+        mask-size: contain;
+        -webkit-mask-repeat: no-repeat;
+        mask-repeat: no-repeat;
+        -webkit-mask-position: center;
+        mask-position: center;
+        background-color: currentColor;
+      }
+    </style>
+</head>
+<body>
+
+<!-- ====== TOP HEADER (copied verbatim from partials/project-shell.html, 前台对话 active) ====== -->
+<header class="app-header">
+  <div class="header-inner">
+    <div class="header-brand">
+      <svg class="brand-logo" width="32" height="32" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <rect width="32" height="32" rx="8" fill="var(--qa-primary)"/>
+        <path d="M10 12.5C10 10.567 11.567 9 13.5 9H18.5C20.433 9 22 10.567 22 12.5V19.5C22 21.433 20.433 23 18.5 23H13.5C11.567 23 10 21.433 10 19.5V12.5Z" stroke="white" stroke-width="2"/>
+        <circle cx="16" cy="16" r="2.5" fill="white"/>
+        <path d="M14 16L12 14M18 16L20 14" stroke="white" stroke-width="1.5" stroke-linecap="round"/>
+      </svg>
+      <span class="brand-title">规范智能问答助手</span>
+    </div>
+    <nav class="header-nav">
+      <a href="pages/chat.html" class="nav-link active" data-nav-key="chat" data-dom-id="nav-chat">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+        <span>前台对话</span>
+      </a>
+      <a href="pages/llm-config.html" class="nav-link" data-nav-key="backend" data-dom-id="nav-backend">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 9h18M3 15h18M9 3v18M15 3v18"/></svg>
+        <span>后台管理</span>
+      </a>
+    </nav>
+    <div class="header-right">
+      <div class="user-chip">
+        <div class="user-avatar">A</div>
+        <span class="user-name">管理员</span>
+      </div>
+      <button class="icon-btn" data-dom-id="btn-logout" aria-label="退出登录">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+      </button>
+    </div>
+  </div>
+</header>
+
+<!-- ====== CHAT MAIN (KB selector + scrollable messages) ====== -->
+<main class="chat-main">
+  <!-- Knowledge Base selector top bar -->
+  <div class="chat-topbar">
+    <div class="kb-selector" id="kb-selector">
+      <button class="kb-trigger" id="kb-trigger" type="button" aria-haspopup="listbox" aria-expanded="true">
+        <span class="kb-trigger-icon">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>
+        </span>
+        <span class="kb-trigger-label">
+          <span class="kb-trigger-hint">已选择知识库</span>
+          <span class="kb-name">工程规范库</span>
+        </span>
+        <span class="kb-chevron">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>
+        </span>
+      </button>
+      <div class="kb-dropdown open" id="kb-dropdown" role="listbox" aria-label="请选择知识库">
+        <div class="kb-dropdown-header">请选择知识库</div>
+        <div class="kb-option selected" role="option" aria-selected="true">
+          <span class="kb-option-icon">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>
+          </span>
+          <span class="kb-option-body">
+            <span class="kb-option-name">工程规范库</span>
+            <span class="kb-option-desc">工程规范与验收标准文档集</span>
+          </span>
+          <span class="kb-check">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>
+          </span>
+        </div>
+        <div class="kb-option" role="option" aria-selected="false">
+          <span class="kb-option-icon">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>
+          </span>
+          <span class="kb-option-body">
+            <span class="kb-option-name">安全管理制度库</span>
+            <span class="kb-option-desc">安全生产与管理规章文档</span>
+          </span>
+        </div>
+        <div class="kb-option" role="option" aria-selected="false">
+          <span class="kb-option-icon">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>
+          </span>
+          <span class="kb-option-body">
+            <span class="kb-option-name">施工技术手册库</span>
+            <span class="kb-option-desc">施工工艺与技术操作指南</span>
+          </span>
+        </div>
+        <div class="kb-option" role="option" aria-selected="false">
+          <span class="kb-option-icon">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>
+          </span>
+          <span class="kb-option-body">
+            <span class="kb-option-name">材料检测标准库</span>
+            <span class="kb-option-desc">建筑材料检测方法与标准</span>
+          </span>
+        </div>
+      </div>
+    </div>
+    <div class="topbar-status">
+      <span class="status-dot"></span>
+      <span class="status-text">已连接 · GPT-4 模型</span>
+    </div>
+  </div>
+
+  <!-- Scrollable chat messages -->
+  <div class="chat-messages">
+    <div class="chat-column">
+
+      <!-- Welcome bubble (centered, initial state) -->
+      <div class="welcome-bubble">
+        <div class="welcome-avatar">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 8V4H8"/><rect width="16" height="12" x="4" y="8" rx="2"/><path d="M2 14h2M20 14h2M15 13v2M9 13v2"/></svg>
+        </div>
+        <div class="welcome-text">你好！我是智能问答助手，请选择知识库后向我提问。</div>
+      </div>
+
+      <!-- User question (right-aligned, indigo) -->
+      <div class="message-row user">
+        <div class="message-content">
+          <div class="bubble user-bubble">
+            <p>请问钢结构安装的验收标准是什么？</p>
+          </div>
+          <div class="message-meta user-meta">
+            <span class="message-time">14:32</span>
+          </div>
+        </div>
+        <div class="message-avatar user-avatar">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+        </div>
+      </div>
+
+      <!-- AI answer (left-aligned, white card with border) -->
+      <div class="message-row ai">
+        <div class="message-avatar ai-avatar">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 8V4H8"/><rect width="16" height="12" x="4" y="8" rx="2"/><path d="M2 14h2M20 14h2M15 13v2M9 13v2"/></svg>
+        </div>
+        <div class="message-content">
+          <div class="bubble ai-bubble">
+            <div class="ai-answer">
+              <h4 class="answer-heading">钢结构安装验收标准</h4>
+              <p class="answer-intro">钢结构安装工程的验收分为以下几个关键项目：</p>
+              <ol class="answer-list">
+                <li><strong>主控项目：</strong>钢结构构件的连接（焊接、螺栓连接）质量必须符合设计要求，焊缝无损检测合格率应达到100%。</li>
+                <li><strong>一般项目：</strong>钢结构安装偏差应在允许范围内，包括垂直度、标高、轴线位置等，偏差不得超过规范限值。</li>
+                <li><strong>涂装工程：</strong>防腐涂层厚度及附着力应满足设计及规范要求，涂层不得有漏涂、剥落等缺陷。</li>
+                <li><strong>竣工资料：</strong>施工记录、检验报告、设计变更文件等竣工资料应齐全并符合归档要求。</li>
+              </ol>
+              <div class="answer-citation">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg>
+                <span>参考自《钢结构工程施工质量验收规范》第5章</span>
+              </div>
+            </div>
+          </div>
+          <div class="message-meta">
+            <span class="message-time">14:32</span>
+            <div class="message-actions">
+              <button class="action-btn" type="button" aria-label="复制">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>
+                <span>复制</span>
+              </button>
+              <button class="action-btn" type="button" aria-label="重新生成">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M8 16H3v5"/></svg>
+                <span>重新生成</span>
+              </button>
+              <button class="action-btn icon-only" type="button" aria-label="点赞">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 10v12"/><path d="M15 5.88 14 10h5.83a2 2 0 0 1 1.92 2.56l-2.33 8A2 2 0 0 1 17.5 22H4a2 2 0 0 1-2-2v-8a2 2 0 0 1 2-2h2.76a2 2 0 0 0 1.79-1.11L12 2a3.13 3.13 0 0 1 3 3.88Z"/></svg>
+              </button>
+              <button class="action-btn icon-only" type="button" aria-label="点踩">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 14V2"/><path d="M9 18.12 10 14H4.17a2 2 0 0 1-1.92-2.56l2.33-8A2 2 0 0 1 6.5 2H20a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2h-2.76a2 2 0 0 0-1.79 1.11L12 22a3.13 3.13 0 0 1-3-3.88Z"/></svg>
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+</main>
+
+<!-- ====== INPUT BAR (fixed at bottom) ====== -->
+<div class="chat-input-bar">
+  <div class="input-column">
+    <div class="input-wrapper">
+      <button class="attach-btn" type="button" aria-label="添加附件">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 17.93 8.8l-8.57 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
+      </button>
+      <textarea class="chat-textarea" placeholder="请输入您的问题，Shift+Enter换行..." rows="1"></textarea>
+      <button class="send-btn" type="button" aria-label="发送">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.536 21.686a.5.5 0 0 0 .937-.024l6.5-19a.496.496 0 0 0-.635-.635l-19 6.5a.5.5 0 0 0-.024.937l7.93 3.18a2 2 0 0 1 1.112 1.11z"/><path d="m21.854 2.147-10.94 10.939"/></svg>
+        <span>发送</span>
+      </button>
+    </div>
+    <div class="input-hint">Enter发送，Shift+Enter换行</div>
+  </div>
+</div>
+
+<!-- ====== CRITICAL LAYOUT (static, responsive-safe) ====== -->
+<style id="critical-layout">
+  html, body { height: 100%; }
+  body {
+    display: flex;
+    flex-direction: column;
+    height: 100vh;
+    overflow: hidden;
+    margin: 0;
+  }
+  .app-header {
+    flex: 0 0 56px;
+    height: 56px;
+    border-bottom: 1px solid var(--qa-border);
+    background: var(--qa-card);
+    position: relative;
+    z-index: 30;
+  }
+  .chat-main {
+    flex: 1 1 auto;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    min-height: 0;
+  }
+  .chat-topbar {
+    flex: 0 0 auto;
+    border-bottom: 1px solid var(--qa-border);
+    background: var(--qa-card);
+    position: relative;
+    z-index: 20;
+  }
+  .chat-messages {
+    flex: 1 1 auto;
+    overflow-y: auto;
+    overflow-x: hidden;
+    min-height: 0;
+  }
+  .chat-input-bar {
+    flex: 0 0 auto;
+    border-top: 1px solid var(--qa-border);
+    background: var(--qa-card);
+  }
+</style>
+
+<!-- ====== COMPONENT STYLES ====== -->
+<style>
+  /* ---- Header ---- */
+  .header-inner {
+    max-width: 1400px;
+    margin: 0 auto;
+    height: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 24px;
+    gap: 16px;
+  }
+  .header-brand { display: flex; align-items: center; gap: 10px; }
+  .brand-logo { flex: 0 0 auto; }
+  .brand-title { font-size: 16px; font-weight: 700; color: var(--qa-foreground); white-space: nowrap; }
+  .header-nav { display: flex; align-items: center; gap: 4px; }
+  .nav-link {
+    display: inline-flex; align-items: center; gap: 8px;
+    padding: 8px 14px; border-radius: var(--qa-radius-medium);
+    color: var(--qa-muted-foreground); text-decoration: none;
+    font-size: 14px; font-weight: 500; transition: all .15s ease;
+    border: 1px solid transparent;
+  }
+  .nav-link:hover { color: var(--qa-foreground); background: var(--qa-muted); }
+  .nav-link.active {
+    color: var(--qa-primary); background: var(--qa-primary-50);
+    border-color: var(--qa-primary-100);
+  }
+  .header-right { display: flex; align-items: center; gap: 12px; }
+  .user-chip { display: flex; align-items: center; gap: 8px; }
+  .user-avatar {
+    width: 32px; height: 32px; border-radius: var(--radius-full);
+    background: var(--qa-primary); color: var(--qa-primary-foreground);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 13px; font-weight: 600;
+  }
+  .user-name { font-size: 13px; font-weight: 500; color: var(--qa-foreground); white-space: nowrap; }
+  .icon-btn {
+    width: 36px; height: 36px; border-radius: var(--qa-radius-medium);
+    border: 1px solid var(--qa-border); background: var(--qa-card);
+    color: var(--qa-muted-foreground); cursor: pointer;
+    display: inline-flex; align-items: center; justify-content: center;
+    transition: all .15s ease;
+  }
+  .icon-btn:hover { color: var(--qa-foreground); border-color: var(--qa-primary-300); background: var(--qa-muted); }
+  .icon-btn:focus-visible { outline: 2px solid var(--qa-ring); outline-offset: 2px; }
+
+  /* ---- KB Selector ---- */
+  .chat-topbar {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 12px 24px; gap: 16px;
+  }
+  .kb-selector { position: relative; }
+  .kb-trigger {
+    display: inline-flex; align-items: center; gap: 10px;
+    padding: 8px 12px; min-width: 280px;
+    border-radius: var(--qa-radius-medium);
+    border: 1px solid var(--qa-border); background: var(--qa-card);
+    cursor: pointer; transition: all .15s ease;
+    color: var(--qa-foreground); text-align: left;
+  }
+  .kb-trigger:hover { border-color: var(--qa-primary-300); background: var(--qa-muted); }
+  .kb-trigger:focus-visible { outline: 2px solid var(--qa-ring); outline-offset: 2px; }
+  .kb-trigger-icon { color: var(--qa-primary); display: inline-flex; }
+  .kb-trigger-label { display: flex; flex-direction: column; line-height: 1.3; flex: 1; }
+  .kb-trigger-hint { font-size: 11px; color: var(--qa-muted-foreground); }
+  .kb-name { font-size: 14px; font-weight: 600; color: var(--qa-foreground); }
+  .kb-chevron { color: var(--qa-muted-foreground); display: inline-flex; transition: transform .2s ease; }
+  .kb-selector.open .kb-chevron { transform: rotate(180deg); }
+
+  .kb-dropdown {
+    position: absolute; top: calc(100% + 8px); left: 0;
+    min-width: 340px; max-width: 380px;
+    background: var(--qa-popover); border: 1px solid var(--qa-border);
+    border-radius: var(--qa-radius-large);
+    box-shadow: 0 10px 30px rgba(15, 23, 42, .12);
+    z-index: 25; overflow: hidden;
+    display: none;
+  }
+  .kb-dropdown.open { display: block; }
+  .kb-dropdown-header {
+    padding: 10px 14px; font-size: 12px; font-weight: 600;
+    color: var(--qa-muted-foreground);
+    border-bottom: 1px solid var(--qa-border);
+    background: var(--qa-muted);
+    text-transform: none;
+  }
+  .kb-option {
+    display: flex; align-items: flex-start; gap: 10px;
+    padding: 12px 14px; cursor: pointer; transition: background .12s ease;
+    border-bottom: 1px solid var(--qa-border);
+  }
+  .kb-option:last-child { border-bottom: none; }
+  .kb-option:hover { background: var(--qa-muted); }
+  .kb-option.selected { background: var(--qa-primary-50); }
+  .kb-option-icon { color: var(--qa-muted-foreground); display: inline-flex; margin-top: 1px; flex: 0 0 auto; }
+  .kb-option.selected .kb-option-icon { color: var(--qa-primary); }
+  .kb-option-body { display: flex; flex-direction: column; gap: 2px; flex: 1; }
+  .kb-option-name { font-size: 14px; font-weight: 600; color: var(--qa-foreground); }
+  .kb-option-desc { font-size: 12px; color: var(--qa-muted-foreground); line-height: 1.4; }
+  .kb-check { color: var(--qa-primary); display: inline-flex; margin-top: 2px; }
+
+  .topbar-status { display: flex; align-items: center; gap: 8px; }
+  .status-dot { width: 8px; height: 8px; border-radius: var(--radius-full); background: var(--state-success); }
+  .status-text { font-size: 12px; color: var(--qa-muted-foreground); white-space: nowrap; }
+
+  /* ---- Chat messages ---- */
+  .chat-messages { background: var(--qa-neutral-50); }
+  .chat-column {
+    max-width: 860px; margin: 0 auto; padding: 28px 24px 40px;
+    display: flex; flex-direction: column; gap: 24px;
+  }
+  .welcome-bubble {
+    display: flex; flex-direction: column; align-items: center; gap: 14px;
+    padding: 36px 24px; text-align: center;
+    background: var(--qa-card); border: 1px solid var(--qa-border);
+    border-radius: var(--qa-radius-large);
+  }
+  .welcome-avatar {
+    width: 52px; height: 52px; border-radius: var(--radius-full);
+    background: var(--qa-primary-50); color: var(--qa-primary);
+    display: flex; align-items: center; justify-content: center;
+    border: 1px solid var(--qa-primary-100);
+  }
+  .welcome-text { font-size: 15px; color: var(--qa-muted-foreground); max-width: 420px; line-height: 1.6; }
+
+  .message-row { display: flex; gap: 12px; align-items: flex-start; }
+  .message-row.user { flex-direction: row-reverse; }
+  .message-avatar {
+    width: 36px; height: 36px; border-radius: var(--radius-full);
+    display: flex; align-items: center; justify-content: center; flex: 0 0 auto;
+  }
+  .ai-avatar { background: var(--qa-primary); color: var(--qa-primary-foreground); }
+  .user-avatar { background: var(--qa-muted); color: var(--qa-foreground); border: 1px solid var(--qa-border); }
+  .message-content { display: flex; flex-direction: column; gap: 6px; max-width: 78%; }
+  .message-row.user .message-content { align-items: flex-end; }
+
+  .bubble { padding: 14px 16px; border-radius: var(--qa-radius-large); }
+  .user-bubble {
+    background: var(--qa-primary); color: var(--qa-primary-foreground);
+    border-bottom-right-radius: var(--qa-radius-small);
+  }
+  .user-bubble p { font-size: 14px; line-height: 1.6; }
+  .ai-bubble {
+    background: var(--qa-card); color: var(--qa-card-foreground);
+    border: 1px solid var(--qa-border);
+    border-bottom-left-radius: var(--qa-radius-small);
+  }
+
+  .ai-answer { display: flex; flex-direction: column; gap: 10px; }
+  .answer-heading { font-size: 15px; font-weight: 700; color: var(--qa-foreground); }
+  .answer-intro { font-size: 14px; color: var(--qa-foreground); line-height: 1.6; }
+  .answer-list {
+    list-style: none; counter-reset: kb-counter;
+    display: flex; flex-direction: column; gap: 8px; margin: 0; padding: 0;
+  }
+  .answer-list li {
+    counter-increment: kb-counter; position: relative;
+    padding-left: 30px; font-size: 14px; line-height: 1.6; color: var(--qa-foreground);
+  }
+  .answer-list li::before {
+    content: counter(kb-counter);
+    position: absolute; left: 0; top: 1px;
+    width: 20px; height: 20px; border-radius: var(--radius-full);
+    background: var(--qa-primary-50); color: var(--qa-primary);
+    font-size: 11px; font-weight: 700;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .answer-list li strong { color: var(--qa-foreground); font-weight: 600; }
+  .answer-citation {
+    display: flex; align-items: center; gap: 6px;
+    padding: 8px 12px; margin-top: 4px;
+    background: var(--qa-primary-50); border-radius: var(--qa-radius-small);
+    color: var(--qa-primary); font-size: 12px; font-weight: 500;
+  }
+
+  .message-meta { display: flex; align-items: center; gap: 12px; }
+  .message-row.user .message-meta { justify-content: flex-end; }
+  .message-time { font-size: 11px; color: var(--qa-muted-foreground); }
+  .message-actions { display: flex; align-items: center; gap: 4px; }
+  .action-btn {
+    display: inline-flex; align-items: center; gap: 5px;
+    padding: 5px 9px; border-radius: var(--qa-radius-small);
+    border: 1px solid transparent; background: transparent;
+    color: var(--qa-muted-foreground); cursor: pointer;
+    font-size: 12px; transition: all .15s ease;
+  }
+  .action-btn:hover { color: var(--qa-foreground); background: var(--qa-muted); border-color: var(--qa-border); }
+  .action-btn:focus-visible { outline: 2px solid var(--qa-ring); outline-offset: 1px; }
+  .action-btn.icon-only { padding: 5px; }
+  .action-btn.icon-only:hover { color: var(--qa-primary); }
+
+  /* ---- Input bar ---- */
+  .chat-input-bar { padding: 14px 24px 16px; }
+  .input-column { max-width: 860px; margin: 0 auto; display: flex; flex-direction: column; gap: 8px; }
+  .input-wrapper {
+    display: flex; align-items: flex-end; gap: 8px;
+    border: 1px solid var(--qa-border); border-radius: var(--qa-radius-large);
+    background: var(--qa-card); padding: 8px 8px 8px 10px;
+    transition: border-color .15s ease, box-shadow .15s ease;
+  }
+  .input-wrapper:focus-within {
+    border-color: var(--qa-primary-400);
+    box-shadow: 0 0 0 3px var(--qa-primary-50);
+  }
+  .attach-btn {
+    width: 36px; height: 36px; border-radius: var(--qa-radius-medium);
+    border: none; background: transparent; color: var(--qa-muted-foreground);
+    cursor: pointer; display: inline-flex; align-items: center; justify-content: center;
+    transition: all .15s ease; flex: 0 0 auto;
+  }
+  .attach-btn:hover { color: var(--qa-primary); background: var(--qa-muted); }
+  .attach-btn:focus-visible { outline: 2px solid var(--qa-ring); outline-offset: 1px; }
+  .chat-textarea {
+    flex: 1; border: none; outline: none; resize: none;
+    background: transparent; color: var(--qa-foreground);
+    font-family: var(--qa-font-sans); font-size: 14px; line-height: 1.6;
+    padding: 8px 4px; max-height: 140px; min-height: 24px;
+  }
+  .chat-textarea::placeholder { color: var(--qa-muted-foreground); }
+  .send-btn {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 9px 16px; border-radius: var(--qa-radius-medium);
+    border: none; background: var(--qa-primary); color: var(--qa-primary-foreground);
+    cursor: pointer; font-size: 14px; font-weight: 600;
+    transition: all .15s ease; flex: 0 0 auto;
+  }
+  .send-btn:hover { background: var(--qa-primary-700); transform: translateY(-1px); box-shadow: 0 4px 12px rgba(79, 70, 229, .28); }
+  .send-btn:active { transform: translateY(0); }
+  .send-btn:focus-visible { outline: 2px solid var(--qa-ring); outline-offset: 2px; }
+  .input-hint { font-size: 11px; color: var(--qa-muted-foreground); text-align: center; }
+
+  /* ---- Scrollbar ---- */
+  .chat-messages::-webkit-scrollbar { width: 8px; }
+  .chat-messages::-webkit-scrollbar-track { background: transparent; }
+  .chat-messages::-webkit-scrollbar-thumb { background: var(--qa-border); border-radius: var(--radius-full); }
+  .chat-messages::-webkit-scrollbar-thumb:hover { background: var(--qa-neutral-400); }
+
+  /* ---- Reduced motion ---- */
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+      transition-duration: .01ms !important;
+      animation-duration: .01ms !important;
+    }
+    .send-btn:hover { transform: none; }
+    .kb-chevron { transition: none; }
+  }
+
+  /* ---- Responsive ---- */
+  @media (max-width: 720px) {
+    .header-inner { padding: 0 14px; }
+    .user-name { display: none; }
+    .chat-topbar { padding: 10px 14px; flex-wrap: wrap; }
+    .kb-trigger { min-width: 220px; }
+    .chat-column { padding: 20px 14px 32px; }
+    .message-content { max-width: 85%; }
+    .chat-input-bar { padding: 12px 14px 14px; }
+    .topbar-status { display: none; }
+  }
+</style>
+
+<!-- ====== Micro-interaction: KB dropdown toggle ====== -->
+<script>
+  (function () {
+    var selector = document.getElementById('kb-selector');
+    var trigger = document.getElementById('kb-trigger');
+    var dropdown = document.getElementById('kb-dropdown');
+    if (!selector || !trigger || !dropdown) return;
+
+    function close() {
+      selector.classList.remove('open');
+      dropdown.classList.remove('open');
+      trigger.setAttribute('aria-expanded', 'false');
+    }
+    function open() {
+      selector.classList.add('open');
+      dropdown.classList.add('open');
+      trigger.setAttribute('aria-expanded', 'true');
+    }
+
+    trigger.addEventListener('click', function (e) {
+      e.stopPropagation();
+      if (dropdown.classList.contains('open')) { close(); } else { open(); }
+    });
+
+    document.addEventListener('click', function (e) {
+      if (!selector.contains(e.target)) { close(); }
+    });
+
+    var options = dropdown.querySelectorAll('.kb-option');
+    options.forEach(function (opt) {
+      opt.addEventListener('click', function () {
+        options.forEach(function (o) { o.classList.remove('selected'); o.setAttribute('aria-selected', 'false'); });
+        opt.classList.add('selected');
+        opt.setAttribute('aria-selected', 'true');
+        var name = opt.querySelector('.kb-option-name');
+        if (name) {
+          var nameEl = selector.querySelector('.kb-name');
+          if (nameEl) nameEl.textContent = name.textContent;
+        }
+        close();
+      });
+    });
+  })();
+</script>
+
+</body>
+</html>

@@ -1,0 +1,964 @@
+<!DOCTYPE html>
+<html lang="zh-CN" class="light" data-theme="light">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>文档管理</title>
+    <style id="theme-vars">
+/* ============================================
+   智能问答助手系统 — Brand CSS
+   Professional Indigo Tech SaaS
+   ============================================ */
+
+/* ---- Root Tokens ---- */
+:root {
+  /* Primary — Indigo */
+  --qa-primary-50:  #eef2ff;
+  --qa-primary-100: #e0e7ff;
+  --qa-primary-200: #c7d2fe;
+  --qa-primary-300: #a5b4fc;
+  --qa-primary-400: #818cf8;
+  --qa-primary-500: #6366f1;
+  --qa-primary-600: #4f46e5;
+  --qa-primary-700: #4338ca;
+  --qa-primary-800: #3730a3;
+  --qa-primary-900: #312e81;
+
+  /* Neutral scale */
+  --qa-neutral-0:   #ffffff;
+  --qa-neutral-50:  #f8fafc;
+  --qa-neutral-100: #f1f5f9;
+  --qa-neutral-200: #e2e8f0;
+  --qa-neutral-300: #cbd5e1;
+  --qa-neutral-400: #94a3b8;
+  --qa-neutral-500: #64748b;
+  --qa-neutral-600: #475569;
+  --qa-neutral-700: #334155;
+  --qa-neutral-800: #1e293b;
+  --qa-neutral-900: #0f172a;
+
+  /* State colors */
+  --state-success: #10b981;
+  --state-success-soft: #d1fae5;
+  --state-warning: #f59e0b;
+  --state-warning-soft: #fef3c7;
+  --state-error: #ef4444;
+  --state-error-soft: #fee2e2;
+  --state-info: #3b82f6;
+  --state-info-soft: #dbeafe;
+
+  /* Semantic aliases — light mode */
+  --qa-background: #ffffff;
+  --qa-foreground: #0f172a;
+  --qa-card: #ffffff;
+  --qa-card-foreground: #0f172a;
+  --qa-popover: #ffffff;
+  --qa-popover-foreground: #0f172a;
+  --qa-primary: #4f46e5;
+  --qa-primary-foreground: #ffffff;
+  --qa-muted: #f1f5f9;
+  --qa-muted-foreground: #64748b;
+  --qa-border: #e2e8f0;
+  --qa-input: #e2e8f0;
+  --qa-ring: #6366f1;
+
+  /* Radius */
+  --qa-radius-small: 4px;
+  --qa-radius-medium: 8px;
+  --qa-radius-large: 12px;
+  --radius-sm: 4px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --radius-full: 9999px;
+
+  /* Typography */
+  --qa-font-sans: "Inter", "PingFang SC", "Microsoft YaHei", "Noto Sans SC", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --qa-font-mono: "JetBrains Mono", "Fira Code", "Cascadia Code", Consolas, monospace;
+}
+
+/* ---- Dark mode aliases ---- */
+.dark {
+  --qa-background: #0f172a;
+  --qa-foreground: #f1f5f9;
+  --qa-card: #1e293b;
+  --qa-card-foreground: #f1f5f9;
+  --qa-popover: #1e293b;
+  --qa-popover-foreground: #f1f5f9;
+  --qa-primary: #6366f1;
+  --qa-primary-foreground: #ffffff;
+  --qa-muted: #334155;
+  --qa-muted-foreground: #94a3b8;
+  --qa-border: #334155;
+  --qa-input: #334155;
+  --qa-ring: #818cf8;
+}
+
+/* ---- Typography classes ---- */
+.font-sans { font-family: var(--qa-font-sans); }
+.font-mono { font-family: var(--qa-font-mono); }
+
+.text-display { font-size: 28px; font-weight: 700; line-height: 1.3; letter-spacing: -0.02em; }
+.text-heading { font-size: 20px; font-weight: 600; line-height: 1.4; letter-spacing: -0.01em; }
+.text-subheading { font-size: 16px; font-weight: 600; line-height: 1.5; }
+.text-body { font-size: 14px; font-weight: 400; line-height: 1.6; }
+.text-small { font-size: 13px; font-weight: 400; line-height: 1.5; }
+.text-caption { font-size: 12px; font-weight: 400; line-height: 1.4; color: var(--qa-muted-foreground); }
+.text-mono-sm { font-family: var(--qa-font-mono); font-size: 13px; line-height: 1.5; }
+
+/* ---- Base ---- */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  font-family: var(--qa-font-sans);
+  font-size: 14px;
+  line-height: 1.6;
+  color: var(--qa-foreground);
+  background: var(--qa-background);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+    </style>
+    <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4.3.1/dist/index.global.js"></script>
+    <script src="https://unpkg.com/lucide@1.8.0/dist/umd/lucide.min.js"></script>
+    <style type="text/tailwindcss">
+  @theme inline {
+    --color-background: var(--qa-background);
+    --color-foreground: var(--qa-foreground);
+    --color-card: var(--qa-card);
+    --color-card-foreground: var(--qa-card-foreground);
+    --color-popover: var(--qa-popover);
+    --color-popover-foreground: var(--qa-popover-foreground);
+    --color-primary: var(--qa-primary);
+    --color-primary-foreground: var(--qa-primary-foreground);
+    --color-muted: var(--qa-muted);
+    --color-muted-foreground: var(--qa-muted-foreground);
+    --color-border: var(--qa-border);
+    --color-input: var(--qa-input);
+    --color-ring: var(--qa-ring);
+    --radius-sm: var(--qa-radius-small);
+    --radius-md: var(--qa-radius-medium);
+    --radius-lg: var(--qa-radius-large);
+  }
+  @layer base {
+    body { background: var(--qa-background); color: var(--qa-foreground); }
+    td, th { @apply break-words; word-break: break-all; word-break: auto-phrase; }
+    th { @apply whitespace-nowrap; }
+  }
+    </style>
+    <style id="semantic-token-fallback">
+      .bg-background { background-color: var(--qa-background); }
+      .text-background { color: var(--qa-background); }
+      .border-background { border-color: var(--qa-background); }
+      .ring-background { --tw-ring-color: var(--qa-background); }
+      .bg-foreground { background-color: var(--qa-foreground); }
+      .text-foreground { color: var(--qa-foreground); }
+      .border-foreground { border-color: var(--qa-foreground); }
+      .ring-foreground { --tw-ring-color: var(--qa-foreground); }
+      .bg-card { background-color: var(--qa-card); }
+      .text-card { color: var(--qa-card); }
+      .border-card { border-color: var(--qa-card); }
+      .ring-card { --tw-ring-color: var(--qa-card); }
+      .bg-card-foreground { background-color: var(--qa-card-foreground); }
+      .text-card-foreground { color: var(--qa-card-foreground); }
+      .border-card-foreground { border-color: var(--qa-card-foreground); }
+      .ring-card-foreground { --tw-ring-color: var(--qa-card-foreground); }
+      .bg-popover { background-color: var(--qa-popover); }
+      .text-popover { color: var(--qa-popover); }
+      .border-popover { border-color: var(--qa-popover); }
+      .ring-popover { --tw-ring-color: var(--qa-popover); }
+      .bg-popover-foreground { background-color: var(--qa-popover-foreground); }
+      .text-popover-foreground { color: var(--qa-popover-foreground); }
+      .border-popover-foreground { border-color: var(--qa-popover-foreground); }
+      .ring-popover-foreground { --tw-ring-color: var(--qa-popover-foreground); }
+      .bg-primary { background-color: var(--qa-primary); }
+      .text-primary { color: var(--qa-primary); }
+      .border-primary { border-color: var(--qa-primary); }
+      .ring-primary { --tw-ring-color: var(--qa-primary); }
+      .bg-primary-foreground { background-color: var(--qa-primary-foreground); }
+      .text-primary-foreground { color: var(--qa-primary-foreground); }
+      .border-primary-foreground { border-color: var(--qa-primary-foreground); }
+      .ring-primary-foreground { --tw-ring-color: var(--qa-primary-foreground); }
+      .bg-muted { background-color: var(--qa-muted); }
+      .text-muted { color: var(--qa-muted); }
+      .border-muted { border-color: var(--qa-muted); }
+      .ring-muted { --tw-ring-color: var(--qa-muted); }
+      .bg-muted-foreground { background-color: var(--qa-muted-foreground); }
+      .text-muted-foreground { color: var(--qa-muted-foreground); }
+      .border-muted-foreground { border-color: var(--qa-muted-foreground); }
+      .ring-muted-foreground { --tw-ring-color: var(--qa-muted-foreground); }
+      .bg-border { background-color: var(--qa-border); }
+      .text-border { color: var(--qa-border); }
+      .border-border { border-color: var(--qa-border); }
+      .ring-border { --tw-ring-color: var(--qa-border); }
+      .bg-input { background-color: var(--qa-input); }
+      .text-input { color: var(--qa-input); }
+      .border-input { border-color: var(--qa-input); }
+      .ring-input { --tw-ring-color: var(--qa-input); }
+      .bg-ring { background-color: var(--qa-ring); }
+      .text-ring { color: var(--qa-ring); }
+      .border-ring { border-color: var(--qa-ring); }
+      .ring-ring { --tw-ring-color: var(--qa-ring); }
+    </style>
+    <style>
+      .no-scrollbar::-webkit-scrollbar { display: none; }
+      .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+      [data-icon] {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        -webkit-mask-size: contain;
+        mask-size: contain;
+        -webkit-mask-repeat: no-repeat;
+        mask-repeat: no-repeat;
+        -webkit-mask-position: center;
+        mask-position: center;
+        background-color: currentColor;
+      }
+    </style>
+</head>
+<body>
+  <style id="critical-layout">
+    /* ---- Critical Layout ---- */
+    html, body { height: 100%; }
+    body {
+      display: flex;
+      flex-direction: column;
+      min-height: 100vh;
+      margin: 0;
+    }
+    .layout-wrapper {
+      display: flex;
+      flex: 1 1 auto;
+      min-height: 0;
+    }
+    .app-sidebar {
+      flex: 0 0 240px;
+      width: 240px;
+    }
+    .content {
+      flex: 1 1 auto;
+      overflow-y: auto;
+      min-width: 0;
+    }
+  </style>
+
+  <style>
+    /* ---- App Header ---- */
+    .app-header {
+      flex: 0 0 auto;
+      background: var(--qa-card);
+      border-bottom: 1px solid var(--qa-border);
+      height: 56px;
+      position: sticky;
+      top: 0;
+      z-index: 30;
+    }
+    .header-inner {
+      max-width: 100%;
+      height: 100%;
+      padding: 0 24px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 24px;
+    }
+    .header-brand {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .brand-logo { flex: 0 0 auto; }
+    .brand-title {
+      font-size: 16px;
+      font-weight: 700;
+      color: var(--qa-foreground);
+      letter-spacing: -0.01em;
+      white-space: nowrap;
+    }
+    .header-nav {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+    }
+    .nav-link {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 7px 12px;
+      border-radius: var(--qa-radius-medium);
+      font-size: 13px;
+      font-weight: 500;
+      color: var(--qa-muted-foreground);
+      text-decoration: none;
+      transition: background-color 0.15s ease, color 0.15s ease;
+    }
+    .nav-link:hover {
+      background: var(--qa-muted);
+      color: var(--qa-foreground);
+    }
+    .header-right {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    .user-chip {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 4px 10px 4px 4px;
+      border-radius: var(--radius-full);
+      background: var(--qa-muted);
+    }
+    .user-avatar {
+      width: 28px;
+      height: 28px;
+      border-radius: var(--radius-full);
+      background: var(--qa-primary);
+      color: var(--qa-primary-foreground);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 12px;
+      font-weight: 600;
+    }
+    .user-name {
+      font-size: 13px;
+      font-weight: 500;
+      color: var(--qa-foreground);
+    }
+    .icon-btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 36px;
+      height: 36px;
+      border-radius: var(--qa-radius-medium);
+      border: 1px solid var(--qa-border);
+      background: var(--qa-card);
+      color: var(--qa-muted-foreground);
+      cursor: pointer;
+      transition: background-color 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+    }
+    .icon-btn:hover {
+      background: var(--qa-muted);
+      color: var(--qa-foreground);
+      border-color: var(--qa-neutral-300);
+    }
+
+    /* ---- Sidebar ---- */
+    .app-sidebar {
+      background: var(--qa-card);
+      border-right: 1px solid var(--qa-border);
+      display: flex;
+      flex-direction: column;
+      padding: 16px 12px;
+    }
+    .sidebar-nav {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      flex: 1 1 auto;
+    }
+    .sidebar-item {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 10px 12px;
+      border-radius: var(--qa-radius-medium);
+      font-size: 14px;
+      font-weight: 500;
+      color: var(--qa-muted-foreground);
+      text-decoration: none;
+      transition: background-color 0.15s ease, color 0.15s ease;
+    }
+    .sidebar-item:hover {
+      background: var(--qa-muted);
+      color: var(--qa-foreground);
+    }
+    .sidebar-item.active {
+      background: var(--qa-primary);
+      color: var(--qa-primary-foreground);
+    }
+    .sidebar-item.active:hover {
+      background: var(--qa-primary-600);
+      color: var(--qa-primary-foreground);
+    }
+    .sidebar-footer {
+      flex: 0 0 auto;
+      padding: 12px 12px 4px;
+      border-top: 1px solid var(--qa-border);
+      margin-top: 12px;
+    }
+    .sidebar-version {
+      font-size: 12px;
+      color: var(--qa-muted-foreground);
+      font-family: var(--qa-font-mono);
+    }
+
+    /* ---- Content Area ---- */
+    .content {
+      background: var(--qa-neutral-50);
+    }
+    .content-inner {
+      max-width: 1280px;
+      margin: 0 auto;
+      padding: 24px 32px 48px;
+      display: flex;
+      flex-direction: column;
+      gap: 20px;
+    }
+
+    /* ---- Breadcrumb ---- */
+    .breadcrumb {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 13px;
+      color: var(--qa-muted-foreground);
+    }
+    .breadcrumb a {
+      color: var(--qa-muted-foreground);
+      text-decoration: none;
+      transition: color 0.15s ease;
+    }
+    .breadcrumb a:hover {
+      color: var(--qa-primary);
+    }
+    .breadcrumb .crumb-sep {
+      color: var(--qa-neutral-400);
+      display: inline-flex;
+      align-items: center;
+    }
+    .breadcrumb .crumb-current {
+      color: var(--qa-foreground);
+      font-weight: 600;
+    }
+
+    /* ---- Card ---- */
+    .card {
+      background: var(--qa-card);
+      border: 1px solid var(--qa-border);
+      border-radius: var(--qa-radius-large);
+      overflow: hidden;
+    }
+    .card-head {
+      padding: 20px 24px 0;
+    }
+    .card-title {
+      font-size: 16px;
+      font-weight: 600;
+      color: var(--qa-foreground);
+      line-height: 1.5;
+    }
+    .card-subtitle {
+      font-size: 13px;
+      color: var(--qa-muted-foreground);
+      margin-top: 4px;
+      line-height: 1.5;
+    }
+    .card-body {
+      padding: 20px 24px 24px;
+    }
+
+    /* ---- Upload Zone ---- */
+    .upload-zone {
+      border: 2px dashed var(--qa-border);
+      border-radius: var(--qa-radius-medium);
+      padding: 32px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 12px;
+      cursor: pointer;
+      text-align: center;
+      transition: border-color 0.15s ease, background-color 0.15s ease;
+      margin-top: 16px;
+    }
+    .upload-zone:hover {
+      border-color: var(--qa-primary);
+      background: rgba(79, 70, 229, 0.04);
+    }
+    .upload-zone .upload-icon {
+      color: var(--qa-muted-foreground);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .upload-zone .upload-text {
+      font-size: 14px;
+      color: var(--qa-foreground);
+      font-weight: 500;
+    }
+    .upload-zone .upload-hint {
+      font-size: 12px;
+      color: var(--qa-muted-foreground);
+    }
+    .upload-zone input[type="file"] {
+      display: none;
+    }
+
+    /* ---- Upload Progress ---- */
+    .upload-progress {
+      margin-top: 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    .progress-file {
+      border: 1px solid var(--qa-border);
+      border-radius: var(--qa-radius-medium);
+      padding: 14px 16px;
+      background: var(--qa-neutral-50);
+    }
+    .progress-file-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 10px;
+    }
+    .progress-file-name {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 13px;
+      font-weight: 500;
+      color: var(--qa-foreground);
+    }
+    .progress-file-name svg {
+      color: var(--qa-primary);
+      flex: 0 0 auto;
+    }
+    .progress-status {
+      font-size: 12px;
+      color: var(--qa-muted-foreground);
+      white-space: nowrap;
+    }
+    .progress-bar {
+      height: 6px;
+      width: 100%;
+      background: var(--qa-muted);
+      border-radius: 4px;
+      overflow: hidden;
+    }
+    .progress-bar-fill {
+      height: 100%;
+      width: 65%;
+      background: var(--qa-primary);
+      border-radius: 4px;
+      transition: width 0.3s ease;
+    }
+    .progress-meta {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-top: 6px;
+    }
+    .progress-percent {
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--qa-primary);
+      font-variant-numeric: tabular-nums;
+    }
+
+    /* ---- Document Table ---- */
+    .doc-table-wrap {
+      overflow-x: auto;
+    }
+    .doc-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 13px;
+    }
+    .doc-table thead th {
+      background: var(--qa-muted);
+      color: var(--qa-muted-foreground);
+      font-weight: 600;
+      font-size: 13px;
+      text-align: left;
+      padding: 12px 16px;
+      white-space: nowrap;
+      border-bottom: 1px solid var(--qa-border);
+    }
+    .doc-table tbody td {
+      padding: 12px 16px;
+      border-bottom: 1px solid var(--qa-border);
+      color: var(--qa-foreground);
+      vertical-align: middle;
+    }
+    .doc-table tbody tr:last-child td {
+      border-bottom: none;
+    }
+    .doc-table tbody tr {
+      transition: background-color 0.12s ease;
+    }
+    .doc-table tbody tr:hover {
+      background: var(--qa-muted);
+    }
+    .doc-name {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      font-weight: 500;
+      color: var(--qa-foreground);
+    }
+    .doc-name svg {
+      color: var(--qa-muted-foreground);
+      flex: 0 0 auto;
+    }
+    .doc-type {
+      display: inline-flex;
+      align-items: center;
+      padding: 2px 8px;
+      border-radius: var(--qa-radius-small);
+      font-size: 12px;
+      font-weight: 500;
+      background: var(--qa-muted);
+      color: var(--qa-muted-foreground);
+    }
+    .doc-size, .doc-time {
+      color: var(--qa-muted-foreground);
+      font-variant-numeric: tabular-nums;
+      white-space: nowrap;
+    }
+
+    /* ---- Status Badges ---- */
+    .status-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      padding: 2px 8px;
+      border-radius: var(--qa-radius-small);
+      font-size: 12px;
+      font-weight: 500;
+      line-height: 1.5;
+      white-space: nowrap;
+    }
+    .status-dot {
+      width: 6px;
+      height: 6px;
+      border-radius: var(--radius-full);
+      background: currentColor;
+      flex: 0 0 auto;
+    }
+    .status-success {
+      color: var(--state-success);
+      background: var(--state-success-soft);
+    }
+    .status-info {
+      color: var(--state-info);
+      background: var(--state-info-soft);
+    }
+    .status-info .status-dot {
+      animation: pulse-status 1.6s ease-in-out infinite;
+    }
+    .status-pending {
+      color: var(--qa-muted-foreground);
+      background: var(--qa-muted);
+    }
+    .status-error {
+      color: var(--state-error);
+      background: var(--state-error-soft);
+    }
+
+    @keyframes pulse-status {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.6; }
+    }
+
+    /* ---- Action Links ---- */
+    .actions {
+      display: inline-flex;
+      align-items: center;
+      gap: 14px;
+      white-space: nowrap;
+    }
+    .action-link {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      font-size: 13px;
+      font-weight: 500;
+      color: var(--qa-primary);
+      text-decoration: none;
+      cursor: pointer;
+      background: none;
+      border: none;
+      padding: 0;
+      transition: opacity 0.15s ease, color 0.15s ease;
+    }
+    .action-link:hover {
+      opacity: 0.75;
+    }
+    .action-link svg {
+      flex: 0 0 auto;
+    }
+    .action-link.action-danger {
+      color: var(--state-error);
+    }
+    .action-link.action-info {
+      color: var(--state-info);
+    }
+
+    .table-footnote {
+      padding: 12px 16px;
+      font-size: 12px;
+      color: var(--qa-muted-foreground);
+      background: var(--qa-neutral-50);
+      border-top: 1px solid var(--qa-border);
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      .status-info .status-dot {
+        animation: none;
+      }
+      .progress-bar-fill {
+        transition: none;
+      }
+      * {
+        transition: none !important;
+      }
+    }
+  </style>
+
+  <!-- ====== TOP HEADER (copied from project-shell.html) ====== -->
+  <header class="app-header">
+    <div class="header-inner">
+      <div class="header-brand">
+        <svg class="brand-logo" width="32" height="32" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <rect width="32" height="32" rx="8" fill="var(--qa-primary)"/>
+          <path d="M10 12.5C10 10.567 11.567 9 13.5 9H18.5C20.433 9 22 10.567 22 12.5V19.5C22 21.433 20.433 23 18.5 23H13.5C11.567 23 10 21.433 10 19.5V12.5Z" stroke="white" stroke-width="2"/>
+          <circle cx="16" cy="16" r="2.5" fill="white"/>
+          <path d="M14 16L12 14M18 16L20 14" stroke="white" stroke-width="1.5" stroke-linecap="round"/>
+        </svg>
+        <span class="brand-title">智能问答助手</span>
+      </div>
+      <nav class="header-nav">
+        <a href="pages/chat.html" class="nav-link" data-nav-key="chat" data-dom-id="nav-chat">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+          <span>前台对话</span>
+        </a>
+        <a href="pages/llm-config.html" class="nav-link" data-nav-key="backend" data-dom-id="nav-backend">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 9h18M3 15h18M9 3v18M15 3v18"/></svg>
+          <span>后台管理</span>
+        </a>
+      </nav>
+      <div class="header-right">
+        <div class="user-chip">
+          <div class="user-avatar">A</div>
+          <span class="user-name">管理员</span>
+        </div>
+        <button class="icon-btn" data-dom-id="btn-logout" aria-label="退出登录">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <div class="layout-wrapper">
+    <!-- ====== BACKEND SIDEBAR (copied from project-shell.html, KB管理 active) ====== -->
+    <aside class="app-sidebar" id="app-sidebar">
+      <nav class="sidebar-nav">
+        <a href="pages/llm-config.html" class="sidebar-item" data-nav-key="llm" data-dom-id="nav-llm">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="16" height="16" rx="2"/><rect x="9" y="9" width="6" height="6"/><path d="M9 1v3M15 1v3M9 20v3M15 20v3M20 9h3M20 14h3M1 9h3M1 14h3"/></svg>
+          <span>LLM配置</span>
+        </a>
+        <a href="pages/kb-management.html" class="sidebar-item active" data-nav-key="kb" data-dom-id="nav-kb">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>
+          <span>知识库管理</span>
+        </a>
+      </nav>
+      <div class="sidebar-footer">
+        <div class="sidebar-version">v1.0.0</div>
+      </div>
+    </aside>
+
+    <!-- ====== CONTENT ====== -->
+    <main class="content">
+      <div class="content-inner">
+        <!-- Breadcrumb -->
+        <nav class="breadcrumb" aria-label="面包屑">
+          <a href="pages/kb-management.html" data-dom-id="nav-kb">知识库管理</a>
+          <span class="crumb-sep">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
+          </span>
+          <span class="crumb-current">工程规范库</span>
+        </nav>
+
+        <!-- Upload Card -->
+        <section class="card">
+          <div class="card-head">
+            <div class="card-title">文档上传</div>
+            <div class="card-subtitle">支持PDF、Word、TXT、Markdown格式，单次最多20个文件，单个文件不超过50MB</div>
+          </div>
+          <div class="card-body">
+            <label class="upload-zone" for="file-input">
+              <span class="upload-icon">
+                <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M16 16l-4-4-4 4"/><path d="M12 12v9"/><path d="M20.39 18.39A5 5 0 0 0 18 9h-1.26A8 8 0 1 0 3 16.3"/><polyline points="16 16 12 12 8 16"/></svg>
+              </span>
+              <span class="upload-text">拖拽文件到此处，或点击选择文件</span>
+              <span class="upload-hint">PDF、DOCX、TXT、MD · 单文件最大 50MB</span>
+              <input type="file" id="file-input" multiple>
+            </label>
+
+            <!-- Upload progress example -->
+            <div class="upload-progress">
+              <div class="progress-file">
+                <div class="progress-file-head">
+                  <span class="progress-file-name">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="9" y1="13" x2="15" y2="13"/></svg>
+                    钢结构验收规范.pdf
+                  </span>
+                  <span class="progress-status">上传中...</span>
+                </div>
+                <div class="progress-bar">
+                  <div class="progress-bar-fill"></div>
+                </div>
+                <div class="progress-meta">
+                  <span class="progress-status">2.1 MB / 3.2 MB</span>
+                  <span class="progress-percent">65%</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- Document List Table -->
+        <section class="card">
+          <div class="card-head">
+            <div class="card-title">文档列表</div>
+            <div class="card-subtitle">共 5 个文档</div>
+          </div>
+          <div class="card-body" style="padding: 16px 0 0;">
+            <div class="doc-table-wrap">
+              <table class="doc-table">
+                <thead>
+                  <tr>
+                    <th>文档名称</th>
+                    <th>文件类型</th>
+                    <th>文件大小</th>
+                    <th>上传时间</th>
+                    <th>解析状态</th>
+                    <th>操作</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <!-- Row 1: 解析成功 -->
+                  <tr>
+                    <td>
+                      <span class="doc-name">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
+                        混凝土结构设计规范.pdf
+                      </span>
+                    </td>
+                    <td><span class="doc-type">PDF</span></td>
+                    <td class="doc-size">2.4 MB</td>
+                    <td class="doc-time">2026-07-28 09:15</td>
+                    <td><span class="status-badge status-success"><span class="status-dot"></span>解析成功</span></td>
+                    <td>
+                      <div class="actions">
+                        <button class="action-link" type="button"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>预览</button>
+                        <button class="action-link" type="button"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>下载</button>
+                        <button class="action-link" type="button"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>重新解析</button>
+                        <button class="action-link action-danger" type="button"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>删除</button>
+                      </div>
+                    </td>
+                  </tr>
+
+                  <!-- Row 2: 解析成功 -->
+                  <tr>
+                    <td>
+                      <span class="doc-name">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
+                        钢结构工程施工质量验收规范.docx
+                      </span>
+                    </td>
+                    <td><span class="doc-type">Word</span></td>
+                    <td class="doc-size">1.8 MB</td>
+                    <td class="doc-time">2026-07-28 09:20</td>
+                    <td><span class="status-badge status-success"><span class="status-dot"></span>解析成功</span></td>
+                    <td>
+                      <div class="actions">
+                        <button class="action-link" type="button"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>预览</button>
+                        <button class="action-link" type="button"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>下载</button>
+                        <button class="action-link" type="button"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>重新解析</button>
+                        <button class="action-link action-danger" type="button"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>删除</button>
+                      </div>
+                    </td>
+                  </tr>
+
+                  <!-- Row 3: 解析中 -->
+                  <tr>
+                    <td>
+                      <span class="doc-name">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
+                        建筑施工安全检查标准.pdf
+                      </span>
+                    </td>
+                    <td><span class="doc-type">PDF</span></td>
+                    <td class="doc-size">3.2 MB</td>
+                    <td class="doc-time">2026-07-29 10:30</td>
+                    <td><span class="status-badge status-info"><span class="status-dot"></span>解析中</span></td>
+                    <td>
+                      <div class="actions">
+                        <button class="action-link" type="button"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>预览</button>
+                        <button class="action-link" type="button"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>下载</button>
+                        <button class="action-link action-danger" type="button"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>删除</button>
+                      </div>
+                    </td>
+                  </tr>
+
+                  <!-- Row 4: 待解析 -->
+                  <tr>
+                    <td>
+                      <span class="doc-name">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
+                        地基基础工程施工规范.txt
+                      </span>
+                    </td>
+                    <td><span class="doc-type">TXT</span></td>
+                    <td class="doc-size">456 KB</td>
+                    <td class="doc-time">2026-07-29 11:00</td>
+                    <td><span class="status-badge status-pending"><span class="status-dot"></span>待解析</span></td>
+                    <td>
+                      <div class="actions">
+                        <button class="action-link" type="button"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>预览</button>
+                        <button class="action-link" type="button"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>下载</button>
+                        <button class="action-link action-danger" type="button"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>删除</button>
+                      </div>
+                    </td>
+                  </tr>
+
+                  <!-- Row 5: 解析失败 -->
+                  <tr>
+                    <td>
+                      <span class="doc-name">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
+                        防水工程施工规范.md
+                      </span>
+                    </td>
+                    <td><span class="doc-type">Markdown</span></td>
+                    <td class="doc-size">128 KB</td>
+                    <td class="doc-time">2026-07-29 14:22</td>
+                    <td><span class="status-badge status-error"><span class="status-dot"></span>解析失败</span></td>
+                    <td>
+                      <div class="actions">
+                        <button class="action-link action-info" type="button"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>查看原因</button>
+                        <button class="action-link" type="button"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>重新解析</button>
+                        <button class="action-link action-danger" type="button"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>删除</button>
+                      </div>
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+            <div class="table-footnote">解析失败的文档可通过「查看原因」排查问题后重新解析。</div>
+          </div>
+        </section>
+      </div>
+    </main>
+  </div>
+</body>
+</html>

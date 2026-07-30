@@ -1,0 +1,15 @@
+# 构建上下文排除项，避免把大目录或敏感文件打进镜像
+**/node_modules
+**/dist
+**/__pycache__
+**/*.pyc
+.git
+.gitignore
+pgdata
+pgdata_shared
+uploads
+*.log
+.env
+.env.local
+pages
+*.md

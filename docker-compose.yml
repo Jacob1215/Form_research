@@ -1,0 +1,42 @@
+# 规范智能问答助手系统 — 两容器编排（应用服务 + 数据库）
+# 使用：docker compose up -d --build
+services:
+  app:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    ports:
+      - "80:8000"          # 宿主机 80 → 容器 8000；如 80 被占用可改为 "8080:8000"
+    volumes:
+      - ./uploads:/app/uploads        # 原始文档持久化
+    environment:
+      - DATABASE_URL=postgresql://app:app@db:5432/qa
+      - LLM_ENCRYPT_KEY=${LLM_ENCRYPT_KEY:-}
+      - MINERU_API_URL=${MINERU_API_URL:-}
+      - EMBEDDING_API_URL=${EMBEDDING_API_URL:-}
+      - EMBEDDING_API_KEY=${EMBEDDING_API_KEY:-}
+      - EMBEDDING_MODEL=${EMBEDDING_MODEL:-}
+      - EMBEDDING_DIM=${EMBEDDING_DIM:-384}
+      - CORS_ORIGINS=${CORS_ORIGINS:-*}
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+
+  db:
+    image: pgvector/pgvector:pg16
+    environment:
+      - POSTGRES_USER=app
+      - POSTGRES_PASSWORD=app
+      - POSTGRES_DB=qa
+    volumes:
+      - pgdata:/var/lib/postgresql/data   # 必须用命名卷：bind mount 到 Windows(NTFS) 目录会让 initdb chmod 失败
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U app -d qa"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+volumes:
+  pgdata:
