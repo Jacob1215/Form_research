@@ -6,8 +6,6 @@ from sqlalchemy import (
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 from pgvector.sqlalchemy import Vector
 
-from .config import settings
-
 
 class Base(DeclarativeBase):
     pass
@@ -54,29 +52,33 @@ class Document(Base):
     file_type: Mapped[str] = mapped_column(String(32), nullable=False)
     file_size: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     file_path: Mapped[str] = mapped_column(String(1024), nullable=False)
-    parse_status: Mapped[str] = mapped_column(String(32), default="pending", nullable=False)
-    parsed_text: Mapped[str] = mapped_column(Text, nullable=True)
-    chunk_count: Mapped[int] = mapped_column(Integer, default=0)
-    error_message: Mapped[str] = mapped_column(Text, nullable=True)
+    content_text: Mapped[str] = mapped_column(Text, nullable=True)
+    parse_status: Mapped[str] = mapped_column(String(32), nullable=False, default="pending")
+    parsed_content: Mapped[str] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     kb: Mapped["KnowledgeBase"] = relationship("KnowledgeBase", back_populates="documents")
-    chunks: Mapped[list["DocChunk"]] = relationship(
-        "DocChunk", back_populates="document", cascade="all, delete-orphan"
+    chunks: Mapped[list["DocumentChunk"]] = relationship(
+        "DocumentChunk", back_populates="document", cascade="all, delete-orphan"
     )
 
 
-class DocChunk(Base):
-    __tablename__ = "doc_chunks"
+class DocumentChunk(Base):
+    """文档分块 — 用于向量检索。每个分块存储嵌入向量，支持语义搜索。"""
+    __tablename__ = "document_chunks"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    doc_id: Mapped[int] = mapped_column(Integer, ForeignKey("documents.id", ondelete="CASCADE"), nullable=False, index=True)
-    kb_id: Mapped[int] = mapped_column(Integer, ForeignKey("knowledge_bases.id", ondelete="CASCADE"), nullable=False, index=True)
+    doc_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("documents.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    kb_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("knowledge_bases.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    chunk_index: Mapped[int] = mapped_column(Integer, nullable=False)
     content: Mapped[str] = mapped_column(Text, nullable=False)
-    embedding = mapped_column(Vector(settings.EMBEDDING_DIM), nullable=True)
-    chunk_index: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    token_count: Mapped[int] = mapped_column(Integer, default=0)
+    embedding = mapped_column(Vector(512), nullable=True)  # 512维，匹配 bge-small-zh-v1.5
 
     document: Mapped["Document"] = relationship("Document", back_populates="chunks")
 

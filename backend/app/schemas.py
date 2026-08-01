@@ -99,7 +99,7 @@ class LLMConfigUpdate(BaseModel):
     name: Optional[str] = None
     provider: Optional[str] = None
     api_url: Optional[str] = None
-    api_key: Optional[str] = None  # 可选：为空则保留原 key
+    api_key: Optional[str] = None
     model_name: Optional[str] = None
     temperature: Optional[float] = None
     max_tokens: Optional[int] = None
@@ -127,9 +127,7 @@ class DocumentOut(BaseModel):
     file_name: str
     file_type: str
     file_size: int
-    parse_status: str
-    chunk_count: int
-    error_message: Optional[str] = None
+    parse_status: str = "pending"
     created_at: str | None = None
     updated_at: str | None = None
 
@@ -141,16 +139,15 @@ class DocumentOut(BaseModel):
             file_name=obj.file_name,
             file_type=obj.file_type,
             file_size=obj.file_size,
-            parse_status=obj.parse_status,
-            chunk_count=obj.chunk_count,
-            error_message=obj.error_message,
+            parse_status=getattr(obj, "parse_status", "pending") or "pending",
             created_at=_to_iso(obj.created_at),
             updated_at=_to_iso(obj.updated_at),
         )
 
 
 class DocumentDetail(DocumentOut):
-    parsed_text: Optional[str] = None
+    content_text: Optional[str] = None
+    parsed_content: Optional[str] = None
 
 
 # ---------- 对话 ----------
@@ -204,4 +201,3 @@ class ChatRequest(BaseModel):
 class StatusResponse(BaseModel):
     llm_configured: bool
     active_model: Optional[str] = None
-    mineru_available: bool

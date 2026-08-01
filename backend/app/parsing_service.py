@@ -21,15 +21,37 @@ def _read_text(path: str) -> str:
 
 
 def _parse_pdf_local(path: str) -> str:
-    from pypdf import PdfReader
-    reader = PdfReader(path)
+    """使用 pdfplumber 解析 PDF（中文支持远优于 pypdf）。"""
+    import pdfplumber
     parts: list[str] = []
-    for page in reader.pages:
+    with pdfplumber.open(path) as pdf:
+        for i, page in enumerate(pdf.pages):
+            try:
+                text = page.extract_text()
+                if text:
+                    parts.append(text)
+            except Exception as e:  # noqa: BLE001
+                logger.warning("PDF 第 %d 页解析失败：%s", i + 1, e)
+
+    # 如果 pdfplumber 提取内容过少，尝试 PyMuPDF
+    full_text = "\n".join(parts)
+    if len(full_text.strip()) < 200:
+        logger.info("PDF 可能为扫描件，尝试 PyMuPDF: %s", path)
         try:
-            parts.append(page.extract_text() or "")
-        except Exception as e:  # noqa: BLE001
-            logger.warning("PDF 第 %d 页解析失败：%s", len(parts) + 1, e)
-    return "\n".join(parts)
+            import fitz
+            fitz_doc = fitz.open(path)
+            ocr_parts = []
+            for page in fitz_doc:
+                text = page.get_text()
+                if text and len(text.strip()) > 50:
+                    ocr_parts.append(text)
+            fitz_doc.close()
+            if ocr_parts:
+                return "\n".join(ocr_parts)
+        except Exception as e:
+            logger.warning("PyMuPDF 提取失败: %s", e)
+
+    return full_text
 
 
 def _parse_docx_local(path: str) -> str:

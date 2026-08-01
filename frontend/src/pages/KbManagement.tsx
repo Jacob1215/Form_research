@@ -133,7 +133,7 @@ export default function KbManagement() {
   }
 
   const handleDelete = async (kb: KnowledgeBase) => {
-    if (!window.confirm(`确认删除知识库「${kb.name}」吗？该操作将清理其下所有文档及向量数据且不可恢复。`))
+    if (!window.confirm(`确认删除知识库「${kb.name}」吗？该操作将清理其下所有文档且不可恢复。`))
       return
     try {
       await apiDelete(`/api/admin/knowledge-bases/${kb.id}`)

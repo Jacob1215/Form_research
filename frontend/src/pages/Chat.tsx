@@ -5,11 +5,15 @@ import Header from '../components/Header'
 import {
   fetchKnowledgeBases,
   fetchStatus,
+  fetchConversations,
+  fetchConversationMessages,
   streamChat,
   type KnowledgeBase,
   type StatusInfo,
   type ChatReference,
   type StreamHandle,
+  type Conversation,
+  type Message as ApiMessage,
 } from '../api'
 
 interface ChatMessage {
@@ -47,6 +51,10 @@ export default function Chat() {
 
   const [status, setStatus] = useState<StatusInfo | null>(null)
 
+  const [conversations, setConversations] = useState<Conversation[]>([])
+  const [currentConvId, setCurrentConvId] = useState<string | null>(null)
+  const [convLoading, setConvLoading] = useState(false)
+
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [input, setInput] = useState('')
   const [streaming, setStreaming] = useState(false)
@@ -71,9 +79,7 @@ export default function Chat() {
         if (items.length > 0) setSelectedKb(items[0])
       })
       .catch((err: unknown) => {
-        if (!cancelled) {
-          console.error(err)
-        }
+        if (!cancelled) console.error(err)
       })
       .finally(() => {
         if (!cancelled) setKbLoading(false)
@@ -81,10 +87,30 @@ export default function Chat() {
     fetchStatus()
       .then((res) => !cancelled && setStatus(res))
       .catch((err: unknown) => !cancelled && console.error(err))
-    return () => {
-      cancelled = true
+    return () => { cancelled = true }
+  }, [])
+
+  /* ----- load conversations when KB changes ----- */
+  const loadConversations = useCallback(async (kbId: string) => {
+    setConvLoading(true)
+    try {
+      const res = await fetchConversations(kbId)
+      setConversations(res.items || [])
+    } catch (err) {
+      console.error(err)
+      setConversations([])
+    } finally {
+      setConvLoading(false)
     }
   }, [])
+
+  useEffect(() => {
+    if (selectedKb) {
+      loadConversations(selectedKb.id)
+    } else {
+      setConversations([])
+    }
+  }, [selectedKb, loadConversations])
 
   /* ----- close dropdown on outside click ----- */
   useEffect(() => {
@@ -104,9 +130,7 @@ export default function Chat() {
     if (el) el.scrollTop = el.scrollHeight
   }, [])
 
-  useEffect(() => {
-    scrollToBottom()
-  }, [messages, scrollToBottom])
+  useEffect(() => { scrollToBottom() }, [messages, scrollToBottom])
 
   /* ----- auto-grow textarea ----- */
   useEffect(() => {
@@ -116,33 +140,69 @@ export default function Chat() {
     ta.style.height = `${Math.min(ta.scrollHeight, 140)}px`
   }, [input])
 
+  /* ----- load conversation messages ----- */
+  const loadConversationMessages = useCallback(async (convId: string) => {
+    try {
+      const res = await fetchConversationMessages(convId)
+      const loaded: ChatMessage[] = (res.items || []).map((m: ApiMessage) => ({
+        id: `c${m.id}`,
+        role: m.role as 'user' | 'assistant',
+        content: m.content,
+        references: m.references || undefined,
+        status: 'done',
+      }))
+      setMessages(loaded)
+      setCurrentConvId(convId)
+      conversationIdRef.current = convId
+    } catch (err) {
+      console.error(err)
+    }
+  }, [])
+
   const selectKb = (kb: KnowledgeBase) => {
     setSelectedKb(kb)
     setDropdownOpen(false)
-    // switching KB clears the conversation
     if (streamRef.current) {
       streamRef.current.abort()
       streamRef.current = null
     }
     setMessages([])
     setStreaming(false)
+    setCurrentConvId(null)
     conversationIdRef.current = undefined
+  }
+
+  const startNewConversation = () => {
+    setMessages([])
+    setCurrentConvId(null)
+    conversationIdRef.current = undefined
+    if (streamRef.current) {
+      streamRef.current.abort()
+      streamRef.current = null
+    }
+    setStreaming(false)
   }
 
   const statusText = (() => {
     if (!status) return '正在获取状态...'
-    if (status.llm_configured && status.active_model) {
-      return `已连接 · ${status.active_model} 模型`
-    }
+    if (status.llm_configured && status.active_model) return `已连接 · ${status.active_model} 模型`
     if (status.llm_configured) return '已连接 · 模型已就绪'
     return '未配置模型'
   })()
 
   const updateMessage = (id: string, patch: Partial<ChatMessage>) => {
-    setMessages((prev) =>
-      prev.map((m) => (m.id === id ? { ...m, ...patch } : m)),
-    )
+    setMessages((prev) => prev.map((m) => (m.id === id ? { ...m, ...patch } : m)))
   }
+
+  const refreshConversations = useCallback(async () => {
+    if (!selectedKb) return
+    try {
+      const res = await fetchConversations(selectedKb.id)
+      setConversations(res.items || [])
+    } catch (err) {
+      console.error(err)
+    }
+  }, [selectedKb])
 
   const sendMessage = useCallback(
     (text: string) => {
@@ -189,28 +249,22 @@ export default function Chat() {
         },
         onStart: (cid) => {
           conversationIdRef.current = cid
+          setCurrentConvId(cid)
+          refreshConversations()
         },
         onDone: () => {
           setMessages((prev) =>
-            prev.map((m) =>
-              m.id === aiId
-                ? { ...m, status: 'done' }
-                : m,
-            ),
+            prev.map((m) => (m.id === aiId ? { ...m, status: 'done' } : m)),
           )
           setStreaming(false)
           streamRef.current = null
+          refreshConversations()
         },
         onError: (err) => {
           setMessages((prev) =>
             prev.map((m) =>
               m.id === aiId
-                ? {
-                    ...m,
-                    status: 'error',
-                    error: err,
-                    content: m.content || `请求失败：${err}`,
-                  }
+                ? { ...m, status: 'error', error: err, content: m.content || `请求失败：${err}` }
                 : m,
             ),
           )
@@ -219,12 +273,10 @@ export default function Chat() {
         },
       })
     },
-    [selectedKb, streaming],
+    [selectedKb, streaming, refreshConversations],
   )
 
-  const handleSend = () => {
-    sendMessage(input)
-  }
+  const handleSend = () => { sendMessage(input) }
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -235,21 +287,17 @@ export default function Chat() {
 
   const handleRegenerate = (aiMsg: ChatMessage) => {
     if (streaming || !selectedKb) return
-    // find the preceding user message
     const idx = messages.findIndex((m) => m.id === aiMsg.id)
     if (idx <= 0) return
     const userMsg = messages[idx - 1]
     if (!userMsg || userMsg.role !== 'user') return
-    // remove the AI message and resend the user question
     setMessages((prev) => prev.filter((m) => m.id !== aiMsg.id))
     sendMessage(userMsg.content)
   }
 
   const handleCopy = (content: string) => {
     if (!content) return
-    if (navigator.clipboard) {
-      navigator.clipboard.writeText(content).catch(() => {})
-    }
+    if (navigator.clipboard) navigator.clipboard.writeText(content).catch(() => {})
   }
 
   const toggleVote = (id: string, vote: 'up' | 'down') => {
@@ -258,343 +306,247 @@ export default function Chat() {
 
   const canSend = !!input.trim() && !!selectedKb && !streaming
 
+  /* ----- helpers for formatting conversation timestamps ----- */
+  const formatConvTime = (iso?: string): string => {
+    if (!iso) return ''
+    const d = new Date(iso)
+    const pad = (n: number) => String(n).padStart(2, '0')
+    return `${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`
+  }
+
+  const truncateTitle = (title: string, max = 20): string => {
+    if (!title) return '新对话'
+    return title.length > max ? title.slice(0, max) + '...' : title
+  }
+
   return (
     <>
       <Header activeNav="chat" />
 
       <main className="chat-main">
-        {/* KB selector top bar */}
-        <div className="chat-topbar">
-          <div className="kb-selector" ref={dropdownRef}>
-            <button
-              className={`kb-trigger${dropdownOpen ? ' open' : ''}`}
-              type="button"
-              aria-haspopup="listbox"
-              aria-expanded={dropdownOpen}
-              onClick={() => setDropdownOpen((v) => !v)}
-            >
-              <span className="kb-trigger-icon">
-                <svg
-                  width="18"
-                  height="18"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="2"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                >
-                  <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" />
-                  <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z" />
-                </svg>
-              </span>
-              <span className="kb-trigger-label">
-                <span className="kb-trigger-hint">
-                  {selectedKb ? '已选择知识库' : '请选择知识库'}
-                </span>
-                <span className="kb-name">
-                  {selectedKb ? selectedKb.name : kbLoading ? '加载中...' : '暂无知识库'}
-                </span>
-              </span>
-              <span className="kb-chevron">
-                <svg
-                  width="18"
-                  height="18"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="2"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                >
-                  <path d="m6 9 6 6 6-6" />
-                </svg>
-              </span>
+        {/* ===== 左侧对话历史侧边栏 ===== */}
+        <aside className="chat-sidebar">
+          <div className="sidebar-header">
+            <button className="new-conv-btn" onClick={startNewConversation}>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <line x1="12" y1="5" x2="12" y2="19" />
+                <line x1="5" y1="12" x2="19" y2="12" />
+              </svg>
+              <span>新对话</span>
             </button>
-            {dropdownOpen && (
-              <div
-                className="kb-dropdown open"
-                role="listbox"
-                aria-label="请选择知识库"
+          </div>
+          <div className="sidebar-list">
+            {!selectedKb && (
+              <div className="sidebar-empty">请先选择知识库</div>
+            )}
+            {selectedKb && convLoading && (
+              <div className="sidebar-empty">加载中...</div>
+            )}
+            {selectedKb && !convLoading && conversations.length === 0 && (
+              <div className="sidebar-empty">暂无对话记录</div>
+            )}
+            {selectedKb && !convLoading && conversations.map((conv) => (
+              <button
+                key={conv.id}
+                className={`conv-item${currentConvId === conv.id ? ' is-active' : ''}`}
+                onClick={() => loadConversationMessages(conv.id)}
+                type="button"
               >
-                <div className="kb-dropdown-header">请选择知识库</div>
-                {kbs.length === 0 && (
-                  <div className="kb-option" style={{ cursor: 'default' }}>
-                    <span className="kb-option-body">
-                      <span className="kb-option-name">暂无知识库</span>
-                      <span className="kb-option-desc">请前往后台创建知识库</span>
-                    </span>
-                  </div>
-                )}
-                {kbs.map((kb) => (
-                  <div
-                    key={kb.id}
-                    className={`kb-option${selectedKb?.id === kb.id ? ' selected' : ''}`}
-                    role="option"
-                    aria-selected={selectedKb?.id === kb.id}
-                    onClick={() => selectKb(kb)}
-                  >
-                    <span className="kb-option-icon">
-                      <svg
-                        width="18"
-                        height="18"
-                        viewBox="0 0 24 24"
-                        fill="none"
-                        stroke="currentColor"
-                        strokeWidth="2"
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                      >
-                        <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" />
-                        <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z" />
-                      </svg>
-                    </span>
-                    <span className="kb-option-body">
-                      <span className="kb-option-name">{kb.name}</span>
-                      <span className="kb-option-desc">
-                        {kb.description || `共 ${kb.doc_count ?? 0} 篇文档`}
+                <div className="conv-item-title">{truncateTitle(conv.title)}</div>
+                <div className="conv-item-time">{formatConvTime(conv.updated_at)}</div>
+              </button>
+            ))}
+          </div>
+        </aside>
+
+        {/* ===== 右侧对话区域 ===== */}
+        <div className="chat-content">
+          {/* KB selector top bar */}
+          <div className="chat-topbar">
+            <div className="kb-selector" ref={dropdownRef}>
+              <button
+                className={`kb-trigger${dropdownOpen ? ' open' : ''}`}
+                type="button"
+                aria-haspopup="listbox"
+                aria-expanded={dropdownOpen}
+                onClick={() => setDropdownOpen((v) => !v)}
+              >
+                <span className="kb-trigger-icon">
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" />
+                    <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z" />
+                  </svg>
+                </span>
+                <span className="kb-trigger-label">
+                  <span className="kb-trigger-hint">{selectedKb ? '已选择知识库' : '请选择知识库'}</span>
+                  <span className="kb-name">{selectedKb ? selectedKb.name : kbLoading ? '加载中...' : '暂无知识库'}</span>
+                </span>
+                <span className="kb-chevron">
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="m6 9 6 6 6-6" />
+                  </svg>
+                </span>
+              </button>
+              {dropdownOpen && (
+                <div className="kb-dropdown open" role="listbox" aria-label="请选择知识库">
+                  <div className="kb-dropdown-header">请选择知识库</div>
+                  {kbs.length === 0 && (
+                    <div className="kb-option" style={{ cursor: 'default' }}>
+                      <span className="kb-option-body">
+                        <span className="kb-option-name">暂无知识库</span>
+                        <span className="kb-option-desc">请前往后台创建知识库</span>
                       </span>
-                    </span>
-                    {selectedKb?.id === kb.id && (
-                      <span className="kb-check">
-                        <svg
-                          width="16"
-                          height="16"
-                          viewBox="0 0 24 24"
-                          fill="none"
-                          stroke="currentColor"
-                          strokeWidth="2"
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                        >
-                          <path d="M20 6 9 17l-5-5" />
+                    </div>
+                  )}
+                  {kbs.map((kb) => (
+                    <div
+                      key={kb.id}
+                      className={`kb-option${selectedKb?.id === kb.id ? ' selected' : ''}`}
+                      role="option"
+                      aria-selected={selectedKb?.id === kb.id}
+                      onClick={() => selectKb(kb)}
+                    >
+                      <span className="kb-option-icon">
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                          <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" />
+                          <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z" />
                         </svg>
                       </span>
-                    )}
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-          <div className="topbar-status">
-            <span className="status-dot" />
-            <span className="status-text">{statusText}</span>
-          </div>
-        </div>
-
-        {/* Scrollable messages */}
-        <div className="chat-messages" ref={messagesRef}>
-          <div className="chat-column">
-            {messages.length === 0 && (
-              <div className="welcome-bubble">
-                <div className="welcome-avatar">
-                  <svg
-                    width="24"
-                    height="24"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="2"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                  >
-                    <path d="M12 8V4H8" />
-                    <rect width="16" height="12" x="4" y="8" rx="2" />
-                    <path d="M2 14h2M20 14h2M15 13v2M9 13v2" />
-                  </svg>
-                </div>
-                <div className="welcome-text">
-                  {selectedKb
-                    ? '你好！我是智能问答助手，请选择知识库后向我提问。'
-                    : '你好！当前暂无可用知识库，请前往后台创建后再提问。'}
-                </div>
-              </div>
-            )}
-
-            {messages.map((msg) =>
-              msg.role === 'user' ? (
-                <div className="message-row user" key={msg.id}>
-                  <div className="message-content">
-                    <div className="bubble user-bubble">
-                      <p>{msg.content}</p>
+                      <span className="kb-option-body">
+                        <span className="kb-option-name">{kb.name}</span>
+                        <span className="kb-option-desc">{kb.description || `共 ${kb.doc_count ?? 0} 篇文档`}</span>
+                      </span>
+                      {selectedKb?.id === kb.id && (
+                        <span className="kb-check">
+                          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                            <path d="M20 6 9 17l-5-5" />
+                          </svg>
+                        </span>
+                      )}
                     </div>
-                    <div className="message-meta user-meta">
-                      <span className="message-time">{nowTime()}</span>
-                    </div>
-                  </div>
-                  <div className="message-avatar user-avatar">
-                    <svg
-                      width="18"
-                      height="18"
-                      viewBox="0 0 24 24"
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth="2"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                    >
-                      <path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2" />
-                      <circle cx="12" cy="7" r="4" />
-                    </svg>
-                  </div>
+                  ))}
                 </div>
-              ) : (
-                <div className="message-row ai" key={msg.id}>
-                  <div className="message-avatar ai-avatar">
-                    <svg
-                      width="20"
-                      height="20"
-                      viewBox="0 0 24 24"
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth="2"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                    >
+              )}
+            </div>
+            <div className="topbar-status">
+              <span className="status-dot" />
+              <span className="status-text">{statusText}</span>
+            </div>
+          </div>
+
+          {/* Scrollable messages */}
+          <div className="chat-messages" ref={messagesRef}>
+            <div className="chat-column">
+              {messages.length === 0 && (
+                <div className="welcome-bubble">
+                  <div className="welcome-avatar">
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                       <path d="M12 8V4H8" />
                       <rect width="16" height="12" x="4" y="8" rx="2" />
                       <path d="M2 14h2M20 14h2M15 13v2M9 13v2" />
                     </svg>
                   </div>
-                  <div className="message-content">
-                    <div className="bubble ai-bubble">
-                      {msg.status === 'thinking' ? (
-                        <div className="ai-answer">
-                          <span className="typing-dots">
-                            <span />
-                            <span />
-                            <span />
-                          </span>
-                          <span style={{ fontSize: '13px', color: 'var(--qa-muted-foreground)' }}>
-                            正在思考...
-                          </span>
-                        </div>
-                      ) : (
-                        <div className="ai-answer">
-                          {msg.content ? (
-                            <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                              {msg.content}
-                            </ReactMarkdown>
-                          ) : (
-                            <span style={{ color: 'var(--qa-muted-foreground)' }}>（无内容）</span>
-                          )}
-                          {msg.references && msg.references.length > 0 && (
-                            <div className="answer-citation">
-                              <svg
-                                width="14"
-                                height="14"
-                                viewBox="0 0 24 24"
-                                fill="none"
-                                stroke="currentColor"
-                                strokeWidth="2"
-                                strokeLinecap="round"
-                                strokeLinejoin="round"
-                              >
-                                <path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z" />
-                                <path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z" />
-                              </svg>
-                              <span>参考自 {formatRefs(msg.references)}</span>
-                            </div>
-                          )}
-                        </div>
-                      )}
-                    </div>
-                    <div className="message-meta">
-                      <span className="message-time">{nowTime()}</span>
-                      {msg.status !== 'thinking' && (
-                        <div className="message-actions">
-                          <button
-                            className="action-btn"
-                            type="button"
-                            aria-label="复制"
-                            onClick={() => handleCopy(msg.content)}
-                          >
-                            <svg
-                              width="15"
-                              height="15"
-                              viewBox="0 0 24 24"
-                              fill="none"
-                              stroke="currentColor"
-                              strokeWidth="2"
-                              strokeLinecap="round"
-                              strokeLinejoin="round"
-                            >
-                              <rect width="14" height="14" x="8" y="8" rx="2" ry="2" />
-                              <path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2" />
-                            </svg>
-                            <span>复制</span>
-                          </button>
-                          <button
-                            className="action-btn"
-                            type="button"
-                            aria-label="重新生成"
-                            onClick={() => handleRegenerate(msg)}
-                            disabled={streaming}
-                          >
-                            <svg
-                              width="15"
-                              height="15"
-                              viewBox="0 0 24 24"
-                              fill="none"
-                              stroke="currentColor"
-                              strokeWidth="2"
-                              strokeLinecap="round"
-                              strokeLinejoin="round"
-                            >
-                              <path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8" />
-                              <path d="M21 3v5h-5" />
-                              <path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16" />
-                              <path d="M8 16H3v5" />
-                            </svg>
-                            <span>重新生成</span>
-                          </button>
-                          <button
-                            className={`action-btn icon-only${liked[msg.id] === 'up' ? ' is-active' : ''}`}
-                            type="button"
-                            aria-label="点赞"
-                            onClick={() => toggleVote(msg.id, 'up')}
-                          >
-                            <svg
-                              width="15"
-                              height="15"
-                              viewBox="0 0 24 24"
-                              fill="none"
-                              stroke="currentColor"
-                              strokeWidth="2"
-                              strokeLinecap="round"
-                              strokeLinejoin="round"
-                            >
-                              <path d="M7 10v12" />
-                              <path d="M15 5.88 14 10h5.83a2 2 0 0 1 1.92 2.56l-2.33 8A2 2 0 0 1 17.5 22H4a2 2 0 0 1-2-2v-8a2 2 0 0 1 2-2h2.76a2 2 0 0 0 1.79-1.11L12 2a3.13 3.13 0 0 1 3 3.88Z" />
-                            </svg>
-                          </button>
-                          <button
-                            className={`action-btn icon-only${liked[msg.id] === 'down' ? ' is-active' : ''}`}
-                            type="button"
-                            aria-label="点踩"
-                            onClick={() => toggleVote(msg.id, 'down')}
-                          >
-                            <svg
-                              width="15"
-                              height="15"
-                              viewBox="0 0 24 24"
-                              fill="none"
-                              stroke="currentColor"
-                              strokeWidth="2"
-                              strokeLinecap="round"
-                              strokeLinejoin="round"
-                            >
-                              <path d="M17 14V2" />
-                              <path d="M9 18.12 10 14H4.17a2 2 0 0 1-1.92-2.56l2.33-8A2 2 0 0 1 6.5 2H20a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2h-2.76a2 2 0 0 0-1.79 1.11L12 22a3.13 3.13 0 0 1-3-3.88Z" />
-                            </svg>
-                          </button>
-                        </div>
-                      )}
-                    </div>
+                  <div className="welcome-text">
+                    {selectedKb
+                      ? '你好！我是规范智能问答助手 V1.0.6，请选择知识库后向我提问。'
+                      : '你好！当前暂无可用知识库，请前往后台创建后再提问。'}
                   </div>
                 </div>
-              ),
-            )}
+              )}
+
+              {messages.map((msg) =>
+                msg.role === 'user' ? (
+                  <div className="message-row user" key={msg.id}>
+                    <div className="message-content">
+                      <div className="bubble user-bubble">
+                        <p>{msg.content}</p>
+                      </div>
+                      <div className="message-meta user-meta">
+                        <span className="message-time">{nowTime()}</span>
+                      </div>
+                    </div>
+                    <div className="message-avatar user-avatar">
+                      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2" />
+                        <circle cx="12" cy="7" r="4" />
+                      </svg>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="message-row ai" key={msg.id}>
+                    <div className="message-avatar ai-avatar">
+                      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M12 8V4H8" />
+                        <rect width="16" height="12" x="4" y="8" rx="2" />
+                        <path d="M2 14h2M20 14h2M15 13v2M9 13v2" />
+                      </svg>
+                    </div>
+                    <div className="message-content">
+                      <div className="bubble ai-bubble">
+                        {msg.status === 'thinking' ? (
+                          <div className="ai-answer">
+                            <span className="typing-dots"><span /><span /><span /></span>
+                            <span style={{ fontSize: '13px', color: 'var(--qa-muted-foreground)' }}>正在思考...</span>
+                          </div>
+                        ) : (
+                          <div className="ai-answer">
+                            {msg.content ? (
+                              <ReactMarkdown remarkPlugins={[remarkGfm]}>{msg.content}</ReactMarkdown>
+                            ) : (
+                              <span style={{ color: 'var(--qa-muted-foreground)' }}>（无内容）</span>
+                            )}
+                            {msg.references && msg.references.length > 0 && (
+                              <div className="answer-citation">
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                  <path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z" />
+                                  <path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z" />
+                                </svg>
+                                <span>参考自 {formatRefs(msg.references)}</span>
+                              </div>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                      <div className="message-meta">
+                        <span className="message-time">{nowTime()}</span>
+                        {msg.status !== 'thinking' && (
+                          <div className="message-actions">
+                            <button className="action-btn" type="button" aria-label="复制" onClick={() => handleCopy(msg.content)}>
+                              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                <rect width="14" height="14" x="8" y="8" rx="2" ry="2" />
+                                <path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2" />
+                              </svg>
+                              <span>复制</span>
+                            </button>
+                            <button className="action-btn" type="button" aria-label="重新生成" onClick={() => handleRegenerate(msg)} disabled={streaming}>
+                              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                <path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8" />
+                                <path d="M21 3v5h-5" />
+                                <path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16" />
+                                <path d="M8 16H3v5" />
+                              </svg>
+                              <span>重新生成</span>
+                            </button>
+                            <button className={`action-btn icon-only${liked[msg.id] === 'up' ? ' is-active' : ''}`} type="button" aria-label="点赞" onClick={() => toggleVote(msg.id, 'up')}>
+                              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                <path d="M7 10v12" />
+                                <path d="M15 5.88 14 10h5.83a2 2 0 0 1 1.92 2.56l-2.33 8A2 2 0 0 1 17.5 22H4a2 2 0 0 1-2-2v-8a2 2 0 0 1 2-2h2.76a2 2 0 0 0 1.79-1.11L12 2a3.13 3.13 0 0 1 3 3.88Z" />
+                              </svg>
+                            </button>
+                            <button className={`action-btn icon-only${liked[msg.id] === 'down' ? ' is-active' : ''}`} type="button" aria-label="点踩" onClick={() => toggleVote(msg.id, 'down')}>
+                              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                <path d="M17 14V2" />
+                                <path d="M9 18.12 10 14H4.17a2 2 0 0 1-1.92-2.56l2.33-8A2 2 0 0 1 6.5 2H20a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2h-2.76a2 2 0 0 0-1.79 1.11L12 22a3.13 3.13 0 0 1-3-3.88Z" />
+                              </svg>
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                ),
+              )}
+            </div>
           </div>
         </div>
       </main>
@@ -603,34 +555,14 @@ export default function Chat() {
       <div className="chat-input-bar">
         <div className="input-column">
           <div className="input-wrapper">
-            <button
-              className="attach-btn"
-              type="button"
-              aria-label="添加附件"
-              onClick={() => {
-                /* attachments out of scope */
-              }}
-            >
-              <svg
-                width="20"
-                height="20"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              >
+            <button className="attach-btn" type="button" aria-label="添加附件" onClick={() => { /* attachments out of scope */ }}>
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                 <path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 17.93 8.8l-8.57 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48" />
               </svg>
             </button>
             <textarea
               className="chat-textarea"
-              placeholder={
-                selectedKb
-                  ? '请输入您的问题，Shift+Enter换行...'
-                  : '请先选择知识库后提问'
-              }
+              placeholder={selectedKb ? '请输入您的问题，Shift+Enter换行...' : '请先选择知识库后提问'}
               rows={1}
               ref={textareaRef}
               value={input}
@@ -638,23 +570,8 @@ export default function Chat() {
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={handleKeyDown}
             />
-            <button
-              className="send-btn"
-              type="button"
-              aria-label="发送"
-              disabled={!canSend}
-              onClick={handleSend}
-            >
-              <svg
-                width="18"
-                height="18"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              >
+            <button className="send-btn" type="button" aria-label="发送" disabled={!canSend} onClick={handleSend}>
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                 <path d="M14.536 21.686a.5.5 0 0 0 .937-.024l6.5-19a.496.496 0 0 0-.635-.635l-19 6.5a.5.5 0 0 0-.024.937l7.93 3.18a2 2 0 0 1 1.112 1.11z" />
                 <path d="m21.854 2.147-10.94 10.939" />
               </svg>

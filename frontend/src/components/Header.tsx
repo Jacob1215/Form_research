@@ -31,7 +31,7 @@ export default function Header({ activeNav }: HeaderProps) {
               strokeLinecap="round"
             />
           </svg>
-          <span className="brand-title">智能问答助手</span>
+          <span className="brand-title">规范智能问答助手 <span className="brand-version">V1.0.6</span></span>
         </div>
         <nav className="header-nav">
           <Link
@@ -52,54 +52,7 @@ export default function Header({ activeNav }: HeaderProps) {
             </svg>
             <span>前台对话</span>
           </Link>
-          <Link
-            to="/admin/llm"
-            className={`nav-link${activeNav === 'backend' ? ' is-active' : ''}`}
-          >
-            <svg
-              width="18"
-              height="18"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            >
-              <path d="M3 9h18M3 15h18M9 3v18M15 3v18" />
-            </svg>
-            <span>后台管理</span>
-          </Link>
         </nav>
-        <div className="header-right">
-          <div className="user-chip">
-            <div className="user-avatar">A</div>
-            <span className="user-name">管理员</span>
-          </div>
-          <button
-            className="icon-btn"
-            type="button"
-            aria-label="退出登录"
-            onClick={() => {
-              /* no-op: auth handled out of scope */
-            }}
-          >
-            <svg
-              width="18"
-              height="18"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            >
-              <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
-              <polyline points="16 17 21 12 16 7" />
-              <line x1="21" y1="12" x2="9" y2="12" />
-            </svg>
-          </button>
-        </div>
       </div>
     </header>
   )

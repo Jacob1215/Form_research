@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 
 from ..database import get_db
 from ..config import settings
-from ..models import KnowledgeBase, Document, DocChunk
+from ..models import KnowledgeBase, Document
 from ..schemas import KnowledgeBaseCreate, KnowledgeBaseUpdate, KnowledgeBaseOut
 
 logger = logging.getLogger("app.admin_kb")
@@ -86,9 +86,8 @@ def delete_knowledge_base(kb_id: int, db: Session = Depends(get_db)):
     kb = db.get(KnowledgeBase, kb_id)
     if kb is None:
         raise HTTPException(status_code=404, detail="知识库不存在")
-    # 显式删除分块（防止 FK 与 vector 列带来的级联问题）
-    db.execute(DocChunk.__table__.delete().where(DocChunk.kb_id == kb_id))
-    db.delete(kb)  # KnowledgeBase 级联删除 Document
+    # KnowledgeBase 级联删除 Document
+    db.delete(kb)
     db.commit()
     _delete_kb_files(kb_id)
     return {"success": True}

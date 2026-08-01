@@ -9,31 +9,19 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from ..database import get_db, SessionLocal
-from ..models import LLMConfig, KnowledgeBase, Conversation, Message
+from ..models import LLMConfig, KnowledgeBase, Conversation, Message, Document
 from ..schemas import (
     ChatRequest, StatusResponse,
     KnowledgeBaseOut, ConversationOut, MessageOut,
 )
 from ..security import decrypt
 from ..llm_provider import factory as llm_factory
-from ..rag_service import retrieve, build_prompt
+from ..rag_service import retrieve, retrieve_with_hybrid, build_prompt
+from ..config import settings
 
 logger = logging.getLogger("app.chat")
 
 router = APIRouter(prefix="/api", tags=["chat"])
-
-
-def _mineru_available() -> bool:
-    from ..config import settings
-    if not settings.MINERU_API_URL:
-        return False
-    try:
-        import httpx
-        with httpx.Client(timeout=httpx.Timeout(2.0)) as c:
-            r = c.get(settings.MINERU_API_URL.rstrip("/") + "/")
-            return r.status_code < 500
-    except Exception:  # noqa: BLE001
-        return False
 
 
 def _get_active_llm(db: Session) -> Optional[LLMConfig]:
@@ -56,7 +44,6 @@ def get_status(db: Session = Depends(get_db)):
     return StatusResponse(
         llm_configured=llm is not None,
         active_model=llm.model_name if llm else None,
-        mineru_available=_mineru_available(),
     ).model_dump()
 
 
@@ -70,13 +57,11 @@ def _stream_chat(request: Request, kb_id: int, message: str, conversation_id: Op
     assistant_content_parts: list[str] = []
     references_payload: list[dict] = []
     try:
-        # 1. 校验知识库
         kb = db.get(KnowledgeBase, kb_id)
         if kb is None:
             yield _sse({"type": "error", "message": "知识库不存在"})
             return
 
-        # 2. 创建或复用对话
         conv: Optional[Conversation]
         if conversation_id:
             conv = db.get(Conversation, conversation_id)
@@ -91,12 +76,10 @@ def _stream_chat(request: Request, kb_id: int, message: str, conversation_id: Op
 
         yield _sse({"type": "start", "conversation_id": conv.id})
 
-        # 3. 保存用户消息
         user_msg = Message(conv_id=conv.id, role="user", content=message)
         db.add(user_msg)
         db.commit()
 
-        # 4. 检索 LLM 配置
         llm = _get_active_llm(db)
         if llm is None:
             yield _sse({"type": "error", "message": "未配置启用的 LLM，请联系管理员"})
@@ -106,23 +89,52 @@ def _stream_chat(request: Request, kb_id: int, message: str, conversation_id: Op
             yield _sse({"type": "error", "message": "LLM 密钥无法解密"})
             return
 
-        # 5. RAG 检索
+        # === RAG 检索（V1.0.7 方案 A：纯向量语义检索） ===
+        rewritten_query = message
         try:
-            chunks = retrieve(db, kb_id, message, top_k=5)
-        except Exception as e:  # noqa: BLE001
-            logger.warning("检索失败：%s", e)
-            chunks = []
+            # 查询改写（可选，用 LLM 将口语化查询扩展为专业术语）
+            if settings.ENABLE_QUERY_REWRITE:
+                from ..hybrid_search import query_rewrite
+                try:
+                    rewritten = query_rewrite(
+                        message, llm.api_url, api_key, llm.model_name
+                    )
+                    if rewritten and rewritten != message:
+                        rewritten_query = f"{message} {rewritten}"
+                        logger.info("查询改写: %r → %r", message, rewritten_query[:80])
+                except Exception as e:
+                    logger.debug("查询改写跳过: %s", e)
 
+            # 纯向量检索（不再降级 BM25）
+            results = retrieve_with_hybrid(
+                db, kb_id, message,
+                top_k=5, rewritten_query=rewritten_query,
+            )
+        except Exception as e:  # noqa: BLE001
+            # V1.0.7：检索失败不降级 BM25，直接报错让用户感知问题
+            logger.warning("向量检索失败: %s", e)
+            yield _sse({
+                "type": "error",
+                "message": f"检索失败：{e}",
+            })
+            return
+
+        # 构建引用信息
         references_payload = [
-            {"doc_name": doc.file_name, "chunk": chunk.content[:200], "score": float(score)}
-            for chunk, doc, score in chunks
+            {
+                "doc_name": r.get("file_name", "未知文档"),
+                "score": float(r.get("score", 0)),
+                "bm25_score": float(r.get("bm25_score", 0)),
+                "vector_score": float(r.get("vector_score", 0)),
+            }
+            for r in results
         ]
         if references_payload:
             yield _sse({"type": "references", "references": references_payload})
 
-        # 6. 构造 prompt 并流式调用 LLM
-        messages = build_prompt(message, chunks)
-        # 用轻量包装对象把解密后的 api_key 传给 provider，避免污染 ORM 对象
+        # 构造 prompt 并流式调用 LLM
+        messages = build_prompt(message, results)
+
         class _Cfg:
             pass
         cfg = _Cfg()
@@ -144,7 +156,6 @@ def _stream_chat(request: Request, kb_id: int, message: str, conversation_id: Op
             yield _sse({"type": "error", "message": f"LLM 调用失败：{e}"})
             return
 
-        # 7. 保存助手消息
         assistant_text = "".join(assistant_content_parts)
         assistant_msg = Message(
             conv_id=conv.id,
@@ -181,7 +192,7 @@ def list_conversations(kb_id: int, db: Session = Depends(get_db)):
     rows = db.execute(
         select(Conversation)
         .where(Conversation.kb_id == kb_id)
-        .order_by(Conversation.created_at.desc())
+        .order_by(Conversation.updated_at.desc())
     ).scalars().all()
     return {"items": [ConversationOut.from_orm(r).model_dump() for r in rows]}
 

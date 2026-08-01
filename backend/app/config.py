@@ -17,11 +17,22 @@ class Settings(BaseSettings):
     # MinerU 解析服务地址（可选）
     MINERU_API_URL: str = ""
 
-    # Embedding 服务配置（可选，未配置则使用本地哈希降级方案）
+    # Embedding 服务配置
     EMBEDDING_API_URL: str = ""
     EMBEDDING_API_KEY: str = ""
     EMBEDDING_MODEL: str = ""
-    EMBEDDING_DIM: int = 384
+    EMBEDDING_DIM: int = 512  # 向量维度，需与模型输出匹配
+    EMBEDDING_USE_LOCAL: bool = True  # 优先使用本地 sentence-transformers 模型
+    EMBEDDING_DEVICE: str = "cpu"  # 推理设备：cpu / cuda
+    LOCAL_EMBEDDING_MODEL: str = "BAAI/bge-small-zh-v1.5"  # 本地模型名（512维，中文优化）
+
+    # RAG 检索配置
+    ENABLE_QUERY_REWRITE: bool = True  # LLM 查询改写
+    ENABLE_RERANK: bool = False  # Cross-encoder 重排序（需额外模型）
+    # V1.0.7 检索模式：vector_only（方案 A，纯向量）/ hybrid（BM25+向量融合）/ bm25_fallback（纯 BM25）
+    RETRIEVE_MODE: str = "vector_only"
+    HYBRID_BM25_WEIGHT: float = 0.3  # RRF 融合中 BM25 权重（仅 hybrid 模式生效）
+    HYBRID_VECTOR_WEIGHT: float = 0.7  # RRF 融合中向量检索权重（仅 hybrid 模式生效）
 
     # 上传文件目录
     UPLOAD_DIR: str = "/app/uploads"

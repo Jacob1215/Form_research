@@ -71,16 +71,44 @@ export interface DocumentItem {
   file_name: string
   file_type?: string
   file_size?: number
-  parse_status: 'pending' | 'parsing' | 'success' | 'failed' | string
-  chunk_count?: number
-  error_message?: string | null
-  parsed_text?: string | null
+  content_text?: string | null
+  parse_status?: string
+  parsed_content?: string | null
   created_at?: string
   updated_at?: string
 }
 
 export interface DocumentListResponse {
   items: DocumentItem[]
+}
+
+export interface ParsedPageImage {
+  id: string
+  src: string
+}
+
+export interface ParsedPage {
+  page_num: number
+  text: string
+  tables: string[][][]
+  images: ParsedPageImage[]
+}
+
+export interface ParsedContent {
+  pages: ParsedPage[]
+  total_pages: number
+}
+
+export interface ParseResult {
+  success: boolean
+  parse_status: string
+  total_pages: number
+  total_images: number
+  total_tables: number
+}
+
+export async function parseDocument(docId: string): Promise<ParseResult> {
+  return apiPost<ParseResult>(`/api/admin/documents/${docId}/parse`, {})
 }
 
 export interface ChatReference {
@@ -160,6 +188,36 @@ export async function apiDelete<T>(path: string): Promise<T> {
 }
 
 /* --------------------------- Convenience endpoints ------------------------- */
+
+export interface Conversation {
+  id: string
+  kb_id: string
+  title: string
+  created_at?: string
+  updated_at?: string
+}
+
+export interface ConversationListResponse {
+  items: Conversation[]
+}
+
+export interface Message {
+  id: string
+  role: string
+  content: string
+  references?: ChatReference[] | null
+  created_at?: string
+}
+
+export interface MessageListResponse {
+  items: Message[]
+}
+
+export const fetchConversations = (kbId: string): Promise<ConversationListResponse> =>
+  apiGet<ConversationListResponse>(`/api/conversations?kb_id=${kbId}`)
+
+export const fetchConversationMessages = (convId: string): Promise<MessageListResponse> =>
+  apiGet<MessageListResponse>(`/api/conversations/${convId}/messages`)
 
 export const fetchKnowledgeBases = (): Promise<KbListResponse> =>
   apiGet<KbListResponse>('/api/knowledge-bases')

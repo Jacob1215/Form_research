@@ -1,16 +1,17 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import {
   apiDelete,
   apiGet,
-  apiPost,
   fetchKnowledgeBases,
+  parseDocument,
   type DocumentItem,
   type DocumentListResponse,
   type KnowledgeBase,
+  type ParsedContent,
 } from '../api'
 
-const MAX_FILE_SIZE = 50 * 1024 * 1024 // 50MB
+const MAX_FILE_SIZE = 50 * 1024 * 1024
 const MAX_FILES = 20
 const ALLOWED_EXT = ['pdf', 'doc', 'docx', 'txt', 'md', 'markdown']
 
@@ -42,35 +43,48 @@ function fileTypeLabel(ext: string): string {
   return ext ? ext.toUpperCase() : '-'
 }
 
-interface StatusBadge {
-  className: string
-  label: string
+function escapeHtml(text: string): string {
+  return text
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;')
 }
 
-function statusOf(s: string): StatusBadge {
-  switch (s) {
-    case 'success':
-    case 'completed':
-    case 'done':
-      return { className: 'status-success', label: '解析成功' }
+function buildHighlightedHtml(
+  text: string,
+  query: string,
+  startIndex: number,
+  activeIndex: number,
+): { html: string; count: number } {
+  const escaped = escapeHtml(text)
+  const trimmed = query.trim()
+  if (!trimmed) return { html: escaped, count: 0 }
+  const escapedQuery = escapeHtml(trimmed).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  const regex = new RegExp(escapedQuery, 'gi')
+  let count = 0
+  const html = escaped.replace(regex, (match) => {
+    const globalIndex = startIndex + count
+    const isActive = globalIndex === activeIndex
+    count++
+    const cls = isActive ? 'highlight-active' : ''
+    return `<mark class="${cls}" id="match-${globalIndex}">${match}</mark>`
+  })
+  return { html, count }
+}
+
+function renderParseStatus(status?: string) {
+  switch (status) {
     case 'parsing':
-    case 'processing':
-      return { className: 'status-info', label: '解析中' }
-    case 'pending':
-    case 'queued':
-      return { className: 'status-pending', label: '待解析' }
-    case 'failed':
+      return <span className="parse-badge is-parsing">解析中</span>
+    case 'done':
+      return <span className="parse-badge is-done">已解析</span>
     case 'error':
-      return { className: 'status-error', label: '解析失败' }
+      return <span className="parse-badge is-error">解析失败</span>
     default:
-      return { className: 'status-pending', label: s || '待解析' }
+      return <span className="parse-badge is-pending">待解析</span>
   }
-}
-
-function isPending(s: string): boolean {
-  return (
-    s === 'pending' || s === 'parsing' || s === 'processing' || s === 'queued'
-  )
 }
 
 interface UploadProgress {
@@ -98,8 +112,10 @@ export default function KbDocuments() {
 
   const [actionLoading, setActionLoading] = useState<Record<string, boolean>>({})
 
+  const [searchQuery, setSearchQuery] = useState('')
+  const [activeMatch, setActiveMatch] = useState(0)
+
   const fileInputRef = useRef<HTMLInputElement>(null)
-  const pollTimerRef = useRef<number | null>(null)
 
   const loadKb = useCallback(async () => {
     if (!kbId) return
@@ -108,7 +124,7 @@ export default function KbDocuments() {
       const found = (res.items || []).find((k) => String(k.id) === String(kbId))
       if (found) setKb(found)
     } catch {
-      /* ignore — name is decorative */
+      /* ignore */
     }
   }, [kbId])
 
@@ -127,27 +143,10 @@ export default function KbDocuments() {
     }
   }, [kbId])
 
-  // initial load
   useEffect(() => {
     loadKb()
     loadDocs()
   }, [loadKb, loadDocs])
-
-  // poll while any doc is pending/parsing
-  useEffect(() => {
-    const hasPending = docs.some((d) => isPending(d.parse_status))
-    if (hasPending) {
-      pollTimerRef.current = window.setInterval(() => {
-        loadDocs()
-      }, 3000)
-    }
-    return () => {
-      if (pollTimerRef.current !== null) {
-        clearInterval(pollTimerRef.current)
-        pollTimerRef.current = null
-      }
-    }
-  }, [docs, loadDocs])
 
   const validateFiles = (files: FileList | File[]): File[] => {
     const arr = Array.from(files)
@@ -208,9 +207,7 @@ export default function KbDocuments() {
           try {
             const data = JSON.parse(xhr.responseText)
             if (data.detail || data.message) msg = data.detail || data.message
-          } catch {
-            /* ignore */
-          }
+          } catch { /* ignore */ }
           setUploads((prev) =>
             prev.map((p) =>
               p.id === uid ? { ...p, status: 'error', message: msg } : p,
@@ -249,18 +246,15 @@ export default function KbDocuments() {
     const files = e.target.files
     if (!files || files.length === 0) return
     const valid = validateFiles(files)
-    // reset input so selecting the same file again re-triggers
     if (fileInputRef.current) fileInputRef.current.value = ''
     if (valid.length === 0) return
 
     setUploading(true)
     try {
-      // upload sequentially to keep progress bars readable
       for (const f of valid) {
         await uploadOne(f)
       }
       await loadDocs()
-      // clear finished upload entries after a short delay
       setTimeout(() => {
         setUploads((prev) => prev.filter((u) => u.status === 'uploading'))
       }, 1500)
@@ -274,6 +268,8 @@ export default function KbDocuments() {
   }
 
   const handlePreview = async (doc: DocumentItem) => {
+    setSearchQuery('')
+    setActiveMatch(0)
     setPreviewLoading(true)
     setPreviewDoc(doc)
     try {
@@ -282,7 +278,7 @@ export default function KbDocuments() {
     } catch (err) {
       setPreviewDoc({
         ...doc,
-        parsed_text: `加载预览失败：${err instanceof Error ? err.message : '未知错误'}`,
+        content_text: `加载预览失败：${err instanceof Error ? err.message : '未知错误'}`,
       })
     } finally {
       setPreviewLoading(false)
@@ -292,6 +288,8 @@ export default function KbDocuments() {
   const closePreview = () => {
     setPreviewDoc(null)
     setPreviewLoading(false)
+    setSearchQuery('')
+    setActiveMatch(0)
   }
 
   useEffect(() => {
@@ -307,18 +305,6 @@ export default function KbDocuments() {
     window.open(`/api/admin/documents/${doc.id}/download`, '_blank')
   }
 
-  const handleReparse = async (doc: DocumentItem) => {
-    setActionLoading((prev) => ({ ...prev, [doc.id]: true }))
-    try {
-      await apiPost(`/api/admin/documents/${doc.id}/reparse`, {})
-      await loadDocs()
-    } catch (err) {
-      alert(err instanceof Error ? err.message : '重新解析失败')
-    } finally {
-      setActionLoading((prev) => ({ ...prev, [doc.id]: false }))
-    }
-  }
-
   const handleDelete = async (doc: DocumentItem) => {
     if (!window.confirm(`确认删除文档「${doc.file_name}」吗？`)) return
     setActionLoading((prev) => ({ ...prev, [doc.id]: true }))
@@ -332,30 +318,78 @@ export default function KbDocuments() {
     }
   }
 
+  const handleParse = async (doc: DocumentItem) => {
+    setActionLoading((prev) => ({ ...prev, [doc.id]: true }))
+    try {
+      await parseDocument(doc.id)
+      await loadDocs()
+    } catch (err) {
+      alert(err instanceof Error ? err.message : '解析失败')
+    } finally {
+      setActionLoading((prev) => ({ ...prev, [doc.id]: false }))
+    }
+  }
+
+  const parsedContent = useMemo<ParsedContent | null>(() => {
+    if (!previewDoc?.parsed_content) return null
+    try {
+      return JSON.parse(previewDoc.parsed_content) as ParsedContent
+    } catch {
+      return null
+    }
+  }, [previewDoc])
+
+  const highlightedPages = useMemo(() => {
+    if (!parsedContent) return []
+    const q = searchQuery
+    let globalIndex = 0
+    return parsedContent.pages.map((page) => {
+      const { html, count } = buildHighlightedHtml(page.text, q, globalIndex, activeMatch)
+      globalIndex += count
+      return { page, html, count }
+    })
+  }, [parsedContent, searchQuery, activeMatch])
+
+  const totalMatches = highlightedPages.reduce((sum, p) => sum + p.count, 0)
+
+  const handleSearchChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    setSearchQuery(e.target.value)
+    setActiveMatch(0)
+  }
+
+  const navigateMatch = (dir: number) => {
+    if (totalMatches === 0) return
+    setActiveMatch((prev) => {
+      const next = prev + dir
+      if (next < 0) return totalMatches - 1
+      if (next >= totalMatches) return 0
+      return next
+    })
+  }
+
+  useEffect(() => {
+    if (totalMatches > 0) {
+      const timer = setTimeout(() => {
+        const el = document.getElementById(`match-${activeMatch}`)
+        el?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+      }, 10)
+      return () => clearTimeout(timer)
+    }
+  }, [activeMatch, totalMatches])
+
   return (
     <main className="content">
       <div className="content-inner">
-        {/* Breadcrumb */}
         <nav className="breadcrumb" aria-label="面包屑">
           <Link to="/admin/kb">知识库管理</Link>
           <span className="crumb-sep">
-            <svg
-              width="14"
-              height="14"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
               <polyline points="9 18 15 12 9 6" />
             </svg>
           </span>
           <span className="crumb-current">{kb?.name || '知识库文档'}</span>
         </nav>
 
-        {/* Upload Card */}
         <section className="card">
           <div className="card-head">
             <div className="card-title">文档上传</div>
@@ -366,16 +400,7 @@ export default function KbDocuments() {
           <div className="card-body">
             <label className="upload-zone" htmlFor="file-input">
               <span className="upload-icon">
-                <svg
-                  width="48"
-                  height="48"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="1.8"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                >
+                <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
                   <path d="M16 16l-4-4-4 4" />
                   <path d="M12 12v9" />
                   <path d="M20.39 18.39A5 5 0 0 0 18 9h-1.26A8 8 0 1 0 3 16.3" />
@@ -400,80 +425,39 @@ export default function KbDocuments() {
                   <div className="progress-file" key={u.id}>
                     <div className="progress-file-head">
                       <span className="progress-file-name">
-                        <svg
-                          width="16"
-                          height="16"
-                          viewBox="0 0 24 24"
-                          fill="none"
-                          stroke="currentColor"
-                          strokeWidth="2"
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                        >
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                           <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
                           <polyline points="14 2 14 8 20 8" />
                           <line x1="9" y1="13" x2="15" y2="13" />
                         </svg>
                         {u.name}
                       </span>
-                      <span
-                        className={`progress-status ${
-                          u.status === 'success'
-                            ? 'is-success'
-                            : u.status === 'error'
-                              ? 'is-error'
-                              : ''
-                        }`}
-                      >
-                        {u.status === 'uploading'
-                          ? '上传中...'
-                          : u.status === 'success'
-                            ? '上传完成'
-                            : u.message || '上传失败'}
+                      <span className={`progress-status ${u.status === 'success' ? 'is-success' : u.status === 'error' ? 'is-error' : ''}`}>
+                        {u.status === 'uploading' ? '上传中...' : u.status === 'success' ? '上传完成' : u.message || '上传失败'}
                       </span>
                     </div>
                     <div className="progress-bar">
-                      <div
-                        className={`progress-bar-fill ${
-                          u.status === 'error'
-                            ? 'is-error'
-                            : u.status === 'success'
-                              ? 'is-success'
-                              : ''
-                        }`}
-                        style={{ width: `${u.percent}%` }}
-                      />
+                      <div className={`progress-bar-fill ${u.status === 'error' ? 'is-error' : u.status === 'success' ? 'is-success' : ''}`} style={{ width: `${u.percent}%` }} />
                     </div>
                     <div className="progress-meta">
-                      <span className="progress-status">
-                        {u.status === 'uploading' ? `${u.percent}%` : ''}
-                      </span>
+                      <span className="progress-status">{u.status === 'uploading' ? `${u.percent}%` : ''}</span>
                       <span className="progress-percent">{u.percent}%</span>
                     </div>
                   </div>
                 ))}
               </div>
             )}
-            {uploading && (
-              <div className="progress-status" style={{ marginTop: 8 }}>
-                正在上传，请稍候...
-              </div>
-            )}
+            {uploading && <div className="progress-status" style={{ marginTop: 8 }}>正在上传，请稍候...</div>}
           </div>
         </section>
 
-        {/* Document List Table */}
         <section className="card">
           <div className="card-head">
             <div className="card-title">文档列表</div>
             <div className="card-subtitle">共 {docs.length} 个文档</div>
           </div>
           <div className="card-body" style={{ padding: '16px 0 0' }}>
-            {error && (
-              <div className="error-banner" style={{ margin: '0 16px 16px' }}>
-                {error}
-              </div>
-            )}
+            {error && <div className="error-banner" style={{ margin: '0 16px 16px' }}>{error}</div>}
             <div className="doc-table-wrap">
               <table className="doc-table">
                 <thead>
@@ -482,234 +466,156 @@ export default function KbDocuments() {
                     <th>文件类型</th>
                     <th>文件大小</th>
                     <th>上传时间</th>
-                    <th>解析状态</th>
+                    <th>状态</th>
                     <th>操作</th>
                   </tr>
                 </thead>
                 <tbody>
                   {loading && (
                     <tr>
-                      <td colSpan={6} className="loading-row">
-                        加载中...
-                      </td>
+                      <td colSpan={6} className="loading-row">加载中...</td>
                     </tr>
                   )}
                   {!loading && docs.length === 0 && (
                     <tr>
-                      <td colSpan={6} className="empty-state">
-                        暂无文档，请上传
-                      </td>
+                      <td colSpan={6} className="empty-state">暂无文档，请上传</td>
                     </tr>
                   )}
-                  {!loading &&
-                    docs.map((doc) => {
-                      const ext = getExt(doc.file_name)
-                      const st = statusOf(doc.parse_status)
-                      const failed = st.label === '解析失败'
-                      const busy = !!actionLoading[doc.id]
-                      return (
-                        <tr key={doc.id}>
-                          <td>
-                            <span className="doc-name">
-                              <svg
-                                width="16"
-                                height="16"
-                                viewBox="0 0 24 24"
-                                fill="none"
-                                stroke="currentColor"
-                                strokeWidth="2"
-                                strokeLinecap="round"
-                                strokeLinejoin="round"
-                              >
-                                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-                                <polyline points="14 2 14 8 20 8" />
-                                <line x1="16" y1="13" x2="8" y2="13" />
-                                <line x1="16" y1="17" x2="8" y2="17" />
+                  {!loading && docs.map((doc) => {
+                    const ext = getExt(doc.file_name)
+                    const busy = !!actionLoading[doc.id]
+                    return (
+                      <tr key={doc.id}>
+                        <td>
+                          <span className="doc-name">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                              <polyline points="14 2 14 8 20 8" />
+                              <line x1="16" y1="13" x2="8" y2="13" />
+                              <line x1="16" y1="17" x2="8" y2="17" />
+                            </svg>
+                            {doc.file_name}
+                          </span>
+                        </td>
+                        <td><span className="doc-type">{fileTypeLabel(ext)}</span></td>
+                        <td className="doc-size">{formatSize(doc.file_size)}</td>
+                        <td className="doc-time">{formatTime(doc.created_at)}</td>
+                        <td>{renderParseStatus(doc.parse_status)}</td>
+                        <td>
+                          <div className="actions">
+                            <button className="action-link" type="button" onClick={() => handlePreview(doc)} disabled={busy}>
+                              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
+                                <circle cx="12" cy="12" r="3" />
                               </svg>
-                              {doc.file_name}
-                            </span>
-                          </td>
-                          <td>
-                            <span className="doc-type">{fileTypeLabel(ext)}</span>
-                          </td>
-                          <td className="doc-size">{formatSize(doc.file_size)}</td>
-                          <td className="doc-time">{formatTime(doc.created_at)}</td>
-                          <td>
-                            <span className={`status-badge ${st.className}`}>
-                              <span className="status-dot" />
-                              {st.label}
-                              {doc.chunk_count !== undefined && doc.chunk_count > 0 && st.label === '解析成功' && (
-                                <span style={{ marginLeft: 4, color: 'var(--qa-muted-foreground)' }}>
-                                  · {doc.chunk_count} 块
-                                </span>
-                              )}
-                            </span>
-                          </td>
-                          <td>
-                            <div className="actions">
+                              预览
+                            </button>
+                            {(ext === 'pdf' || ext === 'md' || ext === 'markdown') && (
                               <button
-                                className="action-link"
+                                className="action-link action-info"
                                 type="button"
-                                onClick={() => handlePreview(doc)}
-                                disabled={busy}
+                                onClick={() => handleParse(doc)}
+                                disabled={busy || doc.parse_status === 'parsing'}
                               >
-                                <svg
-                                  width="15"
-                                  height="15"
-                                  viewBox="0 0 24 24"
-                                  fill="none"
-                                  stroke="currentColor"
-                                  strokeWidth="2"
-                                  strokeLinecap="round"
-                                  strokeLinejoin="round"
-                                >
-                                  <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
-                                  <circle cx="12" cy="12" r="3" />
+                                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                  <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2" />
                                 </svg>
-                                预览
+                                {doc.parse_status === 'parsing' ? '解析中' : '解析'}
                               </button>
-                              <button
-                                className="action-link"
-                                type="button"
-                                onClick={() => handleDownload(doc)}
-                                disabled={busy}
-                              >
-                                <svg
-                                  width="15"
-                                  height="15"
-                                  viewBox="0 0 24 24"
-                                  fill="none"
-                                  stroke="currentColor"
-                                  strokeWidth="2"
-                                  strokeLinecap="round"
-                                  strokeLinejoin="round"
-                                >
-                                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-                                  <polyline points="7 10 12 15 17 10" />
-                                  <line x1="12" y1="15" x2="12" y2="3" />
-                                </svg>
-                                下载
-                              </button>
-                              {failed && doc.error_message && (
-                                <button
-                                  className="action-link action-info"
-                                  type="button"
-                                  title={doc.error_message}
-                                  onClick={() => alert(doc.error_message)}
-                                  disabled={busy}
-                                >
-                                  <svg
-                                    width="15"
-                                    height="15"
-                                    viewBox="0 0 24 24"
-                                    fill="none"
-                                    stroke="currentColor"
-                                    strokeWidth="2"
-                                    strokeLinecap="round"
-                                    strokeLinejoin="round"
-                                  >
-                                    <circle cx="12" cy="12" r="10" />
-                                    <line x1="12" y1="16" x2="12" y2="12" />
-                                    <line x1="12" y1="8" x2="12.01" y2="8" />
-                                  </svg>
-                                  查看原因
-                                </button>
-                              )}
-                              <button
-                                className="action-link"
-                                type="button"
-                                onClick={() => handleReparse(doc)}
-                                disabled={busy}
-                              >
-                                <svg
-                                  width="15"
-                                  height="15"
-                                  viewBox="0 0 24 24"
-                                  fill="none"
-                                  stroke="currentColor"
-                                  strokeWidth="2"
-                                  strokeLinecap="round"
-                                  strokeLinejoin="round"
-                                >
-                                  <polyline points="23 4 23 10 17 10" />
-                                  <polyline points="1 20 1 14 7 14" />
-                                  <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15" />
-                                </svg>
-                                重新解析
-                              </button>
-                              <button
-                                className="action-link action-danger"
-                                type="button"
-                                onClick={() => handleDelete(doc)}
-                                disabled={busy}
-                              >
-                                <svg
-                                  width="15"
-                                  height="15"
-                                  viewBox="0 0 24 24"
-                                  fill="none"
-                                  stroke="currentColor"
-                                  strokeWidth="2"
-                                  strokeLinecap="round"
-                                  strokeLinejoin="round"
-                                >
-                                  <polyline points="3 6 5 6 21 6" />
-                                  <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
-                                </svg>
-                                删除
-                              </button>
-                            </div>
-                          </td>
-                        </tr>
-                      )
-                    })}
+                            )}
+                            <button className="action-link" type="button" onClick={() => handleDownload(doc)} disabled={busy}>
+                              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                                <polyline points="7 10 12 15 17 10" />
+                                <line x1="12" y1="15" x2="12" y2="3" />
+                              </svg>
+                              下载
+                            </button>
+                            <button className="action-link action-danger" type="button" onClick={() => handleDelete(doc)} disabled={busy}>
+                              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                <polyline points="3 6 5 6 21 6" />
+                                <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+                              </svg>
+                              删除
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    )
+                  })}
                 </tbody>
               </table>
-            </div>
-            <div className="table-footnote">
-              解析失败的文档可通过「查看原因」排查问题后重新解析。
             </div>
           </div>
         </section>
       </div>
 
-      {/* Preview modal */}
       {previewDoc && (
-        <div
-          className="modal-backdrop is-open"
-          onClick={(e) => {
-            if (e.target === e.currentTarget) closePreview()
-          }}
-        >
-          <div className="modal" role="dialog" aria-modal="true" aria-labelledby="preview-title">
+        <div className="modal-backdrop is-open" onClick={(e) => { if (e.target === e.currentTarget) closePreview() }}>
+          <div className="modal" role="dialog" aria-modal="true" aria-labelledby="preview-title" style={{ maxWidth: 900 }}>
             <div className="modal-head">
-              <h2 className="modal-title" id="preview-title">
-                {previewDoc.file_name}
-              </h2>
-              <button
-                className="modal-close"
-                type="button"
-                aria-label="关闭"
-                onClick={closePreview}
-              >
-                <svg
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="2"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                >
+              <h2 className="modal-title" id="preview-title">{previewDoc.file_name}</h2>
+              <button className="modal-close" type="button" aria-label="关闭" onClick={closePreview}>
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                   <line x1="18" y1="6" x2="6" y2="18" />
                   <line x1="6" y1="6" x2="18" y2="18" />
                 </svg>
               </button>
             </div>
-            <div className="modal-body">
+            <div className="preview-toolbar">
+              <input
+                className="preview-search-input"
+                type="text"
+                placeholder="搜索文档内容..."
+                value={searchQuery}
+                onChange={handleSearchChange}
+              />
+              {searchQuery.trim() && (
+                <>
+                  <span className="preview-search-count">
+                    {totalMatches > 0 ? `${activeMatch + 1}/${totalMatches} 匹配` : '无匹配'}
+                  </span>
+                  <button className="preview-nav-btn" type="button" onClick={() => navigateMatch(-1)} disabled={totalMatches === 0} aria-label="上一个匹配">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <polyline points="18 15 12 9 6 15" />
+                    </svg>
+                  </button>
+                  <button className="preview-nav-btn" type="button" onClick={() => navigateMatch(1)} disabled={totalMatches === 0} aria-label="下一个匹配">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <polyline points="6 9 12 15 18 9" />
+                    </svg>
+                  </button>
+                </>
+              )}
+            </div>
+            <div className="preview-body">
               {previewLoading ? (
-                '加载中...'
+                <div className="preview-text">加载中...</div>
+              ) : parsedContent && highlightedPages.length > 0 ? (
+                highlightedPages.map(({ page, html }, idx) => (
+                  <div className="preview-page" key={idx}>
+                    <div className="preview-page-num">第 {page.page_num} 页</div>
+                    {page.text && <div className="preview-text" dangerouslySetInnerHTML={{ __html: html }} />}
+                    {page.tables && page.tables.length > 0 && page.tables.map((table, ti) => (
+                      <table className="preview-table" key={`t-${ti}`}>
+                        <tbody>
+                          {table.map((row, ri) => (
+                            <tr key={ri}>
+                              {row.map((cell, ci) => (
+                                <td key={ci}>{cell}</td>
+                              ))}
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    ))}
+                    {page.images && page.images.length > 0 && page.images.map((img) => (
+                      <img className="preview-image" key={img.id} src={img.src} alt={img.id} />
+                    ))}
+                  </div>
+                ))
               ) : (
-                previewDoc.parsed_text || '（该文档暂无可预览的解析文本）'
+                <div className="preview-text">{previewDoc.content_text || '（该文档暂无可预览的文本内容）'}</div>
               )}
             </div>
           </div>

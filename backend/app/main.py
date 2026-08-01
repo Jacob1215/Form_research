@@ -17,7 +17,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger("app.main")
 
-app = FastAPI(title="规范智能问答助手系统", version="1.0.0")
+app = FastAPI(title="规范智能问答助手 V1.1.0", version="1.1.0")
 
 # CORS
 origins = (
@@ -83,7 +83,7 @@ def root():
     """根路径：返回 index.html；若没有前端则返回健康检查 JSON。"""
     if STATIC_DIR:
         return FileResponse(os.path.join(STATIC_DIR, "index.html"))
-    return JSONResponse({"name": "规范智能问答助手系统", "status": "ok", "version": "1.0.0"})
+    return JSONResponse({"name": "规范智能问答助手", "status": "ok", "version": "1.0.0"})
 
 
 @app.get("/health")
