@@ -1,13 +1,17 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
+import ReactMarkdown from 'react-markdown'
+import remarkGfm from 'remark-gfm'
 import {
   apiDelete,
   apiGet,
   fetchKnowledgeBases,
+  fetchParseProgress,
   parseDocument,
   type DocumentItem,
   type DocumentListResponse,
   type KnowledgeBase,
+  type ParseProgress,
   type ParsedContent,
 } from '../api'
 
@@ -111,6 +115,7 @@ export default function KbDocuments() {
   const [previewLoading, setPreviewLoading] = useState(false)
 
   const [actionLoading, setActionLoading] = useState<Record<string, boolean>>({})
+  const [parseProgress, setParseProgress] = useState<Record<string, ParseProgress>>({})
 
   const [searchQuery, setSearchQuery] = useState('')
   const [activeMatch, setActiveMatch] = useState(0)
@@ -147,6 +152,30 @@ export default function KbDocuments() {
     loadKb()
     loadDocs()
   }, [loadKb, loadDocs])
+
+  // V1.1.1：轮询解析中的文档进度，2s 间隔；任一完成/失败时刷新文档列表
+  useEffect(() => {
+    const parsingDocs = docs.filter((d) => d.parse_status === 'parsing')
+    if (parsingDocs.length === 0) return
+    const timer = setInterval(async () => {
+      const updates: Record<string, ParseProgress> = {}
+      let needReload = false
+      for (const d of parsingDocs) {
+        try {
+          const p = await fetchParseProgress(d.id)
+          updates[d.id] = p
+          if (p.parse_status === 'done' || p.parse_status === 'error') needReload = true
+        } catch {
+          /* ignore polling error */
+        }
+      }
+      if (Object.keys(updates).length > 0) {
+        setParseProgress((prev) => ({ ...prev, ...updates }))
+      }
+      if (needReload) loadDocs()
+    }, 2000)
+    return () => clearInterval(timer)
+  }, [docs, loadDocs])
 
   const validateFiles = (files: FileList | File[]): File[] => {
     const arr = Array.from(files)
@@ -321,7 +350,18 @@ export default function KbDocuments() {
   const handleParse = async (doc: DocumentItem) => {
     setActionLoading((prev) => ({ ...prev, [doc.id]: true }))
     try {
+      // V1.1.1：parseDocument 现在立即返回（后台线程执行），进度通过轮询获取
       await parseDocument(doc.id)
+      setParseProgress((prev) => ({
+        ...prev,
+        [doc.id]: {
+          doc_id: doc.id,
+          parse_status: 'parsing',
+          progress: 0,
+          step: '初始化',
+          error: null,
+        },
+      }))
       await loadDocs()
     } catch (err) {
       alert(err instanceof Error ? err.message : '解析失败')
@@ -500,7 +540,22 @@ export default function KbDocuments() {
                         <td><span className="doc-type">{fileTypeLabel(ext)}</span></td>
                         <td className="doc-size">{formatSize(doc.file_size)}</td>
                         <td className="doc-time">{formatTime(doc.created_at)}</td>
-                        <td>{renderParseStatus(doc.parse_status)}</td>
+                        <td>
+                          {renderParseStatus(doc.parse_status)}
+                          {doc.parse_status === 'parsing' && parseProgress[doc.id] && (
+                            <div className="parse-progress-cell">
+                              <div className="progress-bar">
+                                <div
+                                  className="progress-bar-fill is-success"
+                                  style={{ width: `${parseProgress[doc.id].progress}%` }}
+                                />
+                              </div>
+                              <span className="parse-step-text">
+                                {parseProgress[doc.id].step || '解析中'} · {parseProgress[doc.id].progress}%
+                              </span>
+                            </div>
+                          )}
+                        </td>
                         <td>
                           <div className="actions">
                             <button className="action-link" type="button" onClick={() => handlePreview(doc)} disabled={busy}>
@@ -591,6 +646,22 @@ export default function KbDocuments() {
             <div className="preview-body">
               {previewLoading ? (
                 <div className="preview-text">加载中...</div>
+              ) : parsedContent?.format === 'mineru' ? (
+                <div className="preview-mineru">
+                  <div className="preview-source-badge">MinerU 解析结果</div>
+                  {parsedContent.pages[0]?.images && parsedContent.pages[0].images.length > 0 && (
+                    <div className="preview-images">
+                      {parsedContent.pages[0].images.map((img) => (
+                        <img key={img.id} src={img.src} alt={img.id} className="preview-image" />
+                      ))}
+                    </div>
+                  )}
+                  <div className="preview-markdown-body">
+                    <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                      {parsedContent.markdown || parsedContent.pages[0]?.text || ''}
+                    </ReactMarkdown>
+                  </div>
+                </div>
               ) : parsedContent && highlightedPages.length > 0 ? (
                 highlightedPages.map(({ page, html }, idx) => (
                   <div className="preview-page" key={idx}>

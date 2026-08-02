@@ -28,13 +28,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /app
 
-# 先安装依赖以利用缓存（清华 PyPI 主源 + PyTorch CPU 源）
-# torch 走 CPU 版可避免拉取 CUDA 包，镜像体积从 ~2.5GB 降到 ~1.5GB
+# 先安装依赖以利用缓存（清华 PyPI 主源）
+# torch 使用预下载的 CPU 版 wheel，避免 Docker 内从 pytorch.org 下载超时
 COPY backend/requirements.txt ./requirements.txt
+COPY backend/torch-2.13.0+cpu-cp311-cp311-manylinux_2_28_x86_64.whl /tmp/
 ENV PIP_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple \
-    PIP_EXTRA_INDEX_URL=https://download.pytorch.org/whl/cpu \
     HF_ENDPOINT=https://hf-mirror.com
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir /tmp/torch-2.13.0+cpu-cp311-cp311-manylinux_2_28_x86_64.whl \
+    && rm -f /tmp/torch-2.13.0+cpu-cp311-cp311-manylinux_2_28_x86_64.whl
+RUN pip install --no-cache-dir --timeout 300 --retries 5 -r requirements.txt
 
 # V1.0.7：构建期预下载本地 embedding 模型，避免首次启动时运行时下载阻塞请求
 RUN python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('BAAI/bge-small-zh-v1.5', device='cpu')" \

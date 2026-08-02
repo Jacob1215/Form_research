@@ -12,7 +12,7 @@ services:
     environment:
       - DATABASE_URL=postgresql://app:app@db:5432/qa
       - LLM_ENCRYPT_KEY=${LLM_ENCRYPT_KEY:-}
-      - MINERU_API_URL=${MINERU_API_URL:-}
+      - MINERU_API_URL=${MINERU_API_URL:-http://mineru:8000}
       - EMBEDDING_API_URL=${EMBEDDING_API_URL:-}
       - EMBEDDING_API_KEY=${EMBEDDING_API_KEY:-}
       - EMBEDDING_MODEL=${EMBEDDING_MODEL:-}
@@ -29,6 +29,28 @@ services:
     depends_on:
       db:
         condition: service_healthy
+      mineru:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # MinerU PDF 解析服务（本地封装 HTTP API，基于官方 CPU 镜像）
+  # 提供 POST /file_parse 接口，返回 { md_content, images[], total_pages }
+  # CPU 版约 4GB 内存；模型在首次请求时懒加载，权重持久化到 mineru_models 卷
+  mineru:
+    build:
+      context: ./mineru_api
+      dockerfile: Dockerfile
+    container_name: form-research-mineru
+    ports:
+      - "8088:8000"          # 宿主机 8088 → 容器 8000（调试用，可注释）
+    volumes:
+      - mineru_models:/root/.cache    # 模型权重持久化，避免重启重新下载
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=5)\" || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 60s    # 服务本身秒级启动，模型懒加载不阻塞健康检查
     restart: unless-stopped
 
   db:
@@ -48,3 +70,4 @@ services:
 
 volumes:
   pgdata:
+  mineru_models:

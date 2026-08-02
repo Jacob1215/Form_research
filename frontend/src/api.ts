@@ -97,6 +97,8 @@ export interface ParsedPage {
 export interface ParsedContent {
   pages: ParsedPage[]
   total_pages: number
+  format?: 'local' | 'mineru'   // 解析来源：local=pdfplumber, mineru=MinerU
+  markdown?: string             // MinerU 返回的完整 markdown（format=mineru 时存在）
 }
 
 export interface ParseResult {
@@ -109,6 +111,20 @@ export interface ParseResult {
 
 export async function parseDocument(docId: string): Promise<ParseResult> {
   return apiPost<ParseResult>(`/api/admin/documents/${docId}/parse`, {})
+}
+
+export interface ParseProgress {
+  doc_id: string
+  parse_status: string
+  progress: number
+  step: string | null
+  error: string | null
+  started_at?: string | null
+  finished_at?: string | null
+}
+
+export async function fetchParseProgress(docId: string): Promise<ParseProgress> {
+  return apiGet<ParseProgress>(`/api/admin/documents/${docId}/parse-progress`)
 }
 
 export interface ChatReference {

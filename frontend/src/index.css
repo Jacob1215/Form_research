@@ -1621,3 +1621,20 @@ table.config-table {
   background: var(--state-error-soft);
   color: var(--state-error);
 }
+/* V1.1.1：文档列表解析进度单元格 */
+.parse-progress-cell {
+  margin-top: 6px;
+  min-width: 140px;
+}
+.parse-progress-cell .progress-bar {
+  height: 6px;
+}
+.parse-step-text {
+  display: block;
+  font-size: 11px;
+  color: var(--qa-neutral-600);
+  margin-top: 4px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}

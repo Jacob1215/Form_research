@@ -5,6 +5,7 @@
 import os
 import json
 import logging
+from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
 from fastapi.responses import FileResponse
@@ -30,146 +31,14 @@ def _ext(filename: str) -> str:
 
 
 def _extract_text(file_path: str, file_type: str) -> str | None:
-    """从文档中提取文本内容，供 RAG 检索使用。
-
-    支持：txt/md（直接读取）、pdf（pdfplumber，中文效果好）、docx（python-docx）。
-    对扫描版 PDF 自动降级为 PyMuPDF 文本提取。
-    """
-    try:
-        if file_type in TEXT_EXT:
+    """上传时仅对 txt/md 提取文本（PDF/DOC/DOCX 留待 MinerU 解析时提取）。"""
+    if file_type in TEXT_EXT:
+        try:
             with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
-                text = f.read()
-            return text[:100000]
-
-        if file_type == "pdf":
-            # 优先使用 pdfplumber（中文支持远优于 pypdf）
-            import pdfplumber
-            parts = []
-            with pdfplumber.open(file_path) as pdf:
-                for page in pdf.pages:
-                    t = page.extract_text()
-                    if t:
-                        parts.append(t)
-            full_text = "\n\n".join(parts) if parts else ""
-
-            # 如果 pdfplumber 提取内容过少，可能是扫描件，尝试 PyMuPDF
-            if len(full_text.strip()) < 200:
-                logger.info("PDF 可能为扫描件，尝试 PyMuPDF 提取: %s", file_path)
-                try:
-                    import fitz
-                    fitz_doc = fitz.open(file_path)
-                    ocr_parts = []
-                    for page in fitz_doc:
-                        text = page.get_text()
-                        if text and len(text.strip()) > 50:
-                            ocr_parts.append(text)
-                    fitz_doc.close()
-                    if ocr_parts:
-                        full_text = "\n\n".join(ocr_parts)
-                        logger.info("PyMuPDF 提取成功: %d 页有文本", len(ocr_parts))
-                except Exception as e:
-                    logger.warning("PyMuPDF 提取失败: %s", e)
-
-            return full_text[:100000] if full_text.strip() else None
-
-        if file_type == "docx":
-            from docx import Document as DocxDocument
-            doc = DocxDocument(file_path)
-            parts = [p.text for p in doc.paragraphs if p.text.strip()]
-            # 也提取表格中的文本
-            for table in doc.tables:
-                for row in table.rows:
-                    cells = [c.text.strip() for c in row.cells if c.text.strip()]
-                    if cells:
-                        parts.append(" | ".join(cells))
-            return "\n".join(parts)[:100000] if parts else None
-
-        return None
-    except Exception as e:  # noqa: BLE001
-        logger.warning("提取文本失败 %s: %s", file_path, e)
-        return None
-
-
-def _parse_pdf(file_path: str, doc_id: int, kb_id: int) -> dict:
-    """解析 PDF 文件，提取文本、表格和图片。
-
-    返回结构：
-    {
-        "pages": [
-            {"page_num": 1, "text": "...", "tables": [[...]], "images": [{"id": "...", "src": "..."}]}
-        ],
-        "total_pages": N
-    }
-    """
-    import pdfplumber
-    import fitz  # PyMuPDF
-
-    # 图片存储目录
-    img_dir = os.path.join(settings.UPLOAD_DIR, str(kb_id), "images", str(doc_id))
-    os.makedirs(img_dir, exist_ok=True)
-
-    pages = []
-    full_text_parts = []
-
-    # 使用 pdfplumber 提取文本和表格
-    with pdfplumber.open(file_path) as pdf:
-        for i, page in enumerate(pdf.pages, 1):
-            text = page.extract_text() or ""
-            tables = page.extract_tables() or []
-
-            # 清理表格中的 None 值
-            cleaned_tables = []
-            for table in tables:
-                cleaned = [[(cell or "").strip() for cell in row] for row in table]
-                cleaned_tables.append(cleaned)
-
-            pages.append({
-                "page_num": i,
-                "text": text,
-                "tables": cleaned_tables,
-                "images": [],  # 先占位，后面用 PyMuPDF 填充
-            })
-            full_text_parts.append(text)
-
-    # 使用 PyMuPDF 提取图片
-    fitz_doc = fitz.open(file_path)
-    try:
-        for page_num in range(len(fitz_doc)):
-            page = fitz_doc[page_num]
-            image_list = page.get_images(full=True)
-            for img_index, img_info in enumerate(image_list):
-                xref = img_info[0]
-                try:
-                    base_image = fitz_doc.extract_image(xref)
-                    image_bytes = base_image["image"]
-                    image_ext = base_image["ext"]
-
-                    # 跳过过小的图片（< 1KB，可能是装饰元素）
-                    if len(image_bytes) < 1024:
-                        continue
-
-                    img_filename = f"p{page_num + 1}_img{img_index}.{image_ext}"
-                    img_path = os.path.join(img_dir, img_filename)
-                    with open(img_path, "wb") as f:
-                        f.write(image_bytes)
-
-                    img_id = f"p{page_num + 1}_img{img_index}"
-                    img_src = f"/api/admin/documents/{doc_id}/images/{img_filename}"
-
-                    if page_num < len(pages):
-                        pages[page_num]["images"].append({
-                            "id": img_id,
-                            "src": img_src,
-                        })
-                except Exception as e:  # noqa: BLE001
-                    logger.warning("提取图片失败 p%d img%d: %s", page_num + 1, img_index, e)
-    finally:
-        fitz_doc.close()
-
-    return {
-        "pages": pages,
-        "total_pages": len(pages),
-    }
+                return f.read()[:100000]
+        except Exception as e:  # noqa: BLE001
+            logger.warning("读取文本失败 %s: %s", file_path, e)
+    return None
 
 
 def _parse_markdown(file_path: str) -> dict:
@@ -369,7 +238,11 @@ def get_document(doc_id: int, db: Session = Depends(get_db)):
 
 @router.post("/documents/{doc_id}/parse")
 def parse_document(doc_id: int, db: Session = Depends(get_db)):
-    """解析文档：支持 PDF 和 Markdown 文件，提取文本、表格、图片。"""
+    """解析文档：PDF 走 MinerU 异步任务（后台线程 + 进度轮询），Markdown 同步解析。
+
+    V1.1.1：PDF 解析不再阻塞 HTTP 请求，立即返回 parsing 状态；
+    前端通过 GET /documents/{doc_id}/parse-progress 轮询进度。
+    """
     doc = db.get(Document, doc_id)
     if doc is None:
         raise HTTPException(status_code=404, detail="文档不存在")
@@ -380,40 +253,47 @@ def parse_document(doc_id: int, db: Session = Depends(get_db)):
     if not doc.file_path or not os.path.isfile(doc.file_path):
         raise HTTPException(status_code=404, detail="文件不存在")
 
-    # 更新状态为解析中
+    # 重置进度状态
     doc.parse_status = "parsing"
+    doc.parse_progress = 0
+    doc.parse_step = "初始化"
+    doc.parse_error = None
+    doc.parse_task_id = None
+    doc.parse_started_at = datetime.utcnow()
+    doc.parse_finished_at = None
     db.commit()
 
-    try:
-        if doc.file_type == "pdf":
-            result = _parse_pdf(doc.file_path, doc.id, doc.kb_id)
-        else:
-            result = _parse_markdown(doc.file_path)
+    if doc.file_type == "pdf":
+        # PDF 解析耗时较长，放入后台线程执行，避免阻塞 HTTP 请求
+        import threading
+        threading.Thread(
+            target=_run_pdf_parse_async, args=(doc.id,), daemon=True
+        ).start()
+        return {
+            "success": True,
+            "parse_status": "parsing",
+            "progress": 0,
+            "step": "初始化",
+        }
 
-        # 存储解析结果
+    # Markdown 解析快，仍同步执行
+    try:
+        result = _parse_markdown(doc.file_path)
         doc.parsed_content = json.dumps(result, ensure_ascii=False)
         doc.parse_status = "done"
-
-        # 同时更新 content_text（用于 RAG 检索）
+        doc.parse_progress = 100
+        doc.parse_step = "解析完成"
+        doc.parse_finished_at = datetime.utcnow()
         full_text = "\n\n".join(p["text"] for p in result["pages"] if p.get("text"))
         if full_text:
-            doc.content_text = full_text[:100000]  # 限制存储上限
-
+            doc.content_text = full_text[:100000]
         db.commit()
         db.refresh(doc)
-
-        # 解析后 content_text 已更新，必须重建分块；否则混合检索仍使用上传时基于旧文本建的分块，
-        # 导致“解析后仍查不到规范内容”的问题（V1.0.7 修复）
         try:
             rebuilt = _auto_index_document(db, doc)
             logger.info("文档 %s 解析后重建分块：%d 个", doc_id, rebuilt)
         except Exception as e:  # noqa: BLE001
             logger.warning("文档 %s 解析后重建分块失败: %s", doc_id, e)
-
-        logger.info("文档 %s 解析完成：%d 页，%d 张图片",
-                     doc_id, result["total_pages"],
-                     sum(len(p.get("images", [])) for p in result["pages"]))
-
         return {
             "success": True,
             "parse_status": "done",
@@ -421,12 +301,93 @@ def parse_document(doc_id: int, db: Session = Depends(get_db)):
             "total_images": sum(len(p.get("images", [])) for p in result["pages"]),
             "total_tables": sum(len(p.get("tables", [])) for p in result["pages"]),
         }
-
     except Exception as e:
         doc.parse_status = "error"
+        doc.parse_error = str(e)[:500]
+        doc.parse_finished_at = datetime.utcnow()
         db.commit()
         logger.error("文档 %s 解析失败: %s", doc_id, e, exc_info=True)
         raise HTTPException(status_code=500, detail=f"解析失败: {e}")
+
+
+def _run_pdf_parse_async(doc_id: int):
+    """后台线程：调用 MinerU 异步任务解析 PDF，实时更新 DB 进度。
+
+    使用独立 DB 会话（SessionLocal），避免与请求作用域冲突。
+    """
+    from ..parsing_service import parse_pdf_with_progress
+    from ..database import SessionLocal
+
+    db = SessionLocal()
+    try:
+        doc = db.get(Document, doc_id)
+        if doc is None:
+            return
+
+        def on_progress(step: str, percent: int):
+            try:
+                d = db.get(Document, doc_id)
+                if d is not None:
+                    d.parse_step = step
+                    # 进度只增不减，避免 MinerU running 时 progress=0 导致回退
+                    d.parse_progress = max(int(d.parse_progress or 0), int(percent))
+                    db.commit()
+            except Exception as e:  # noqa: BLE001
+                logger.warning("进度回调写库失败 doc_id=%d: %s", doc_id, e)
+
+        result = parse_pdf_with_progress(
+            doc.file_path, doc.id, doc.kb_id, on_progress=on_progress
+        )
+
+        doc = db.get(Document, doc_id)
+        if doc is None:
+            return
+        doc.parsed_content = json.dumps(result, ensure_ascii=False)
+        doc.parse_status = "done"
+        doc.parse_progress = 100
+        doc.parse_step = "解析完成"
+        doc.parse_finished_at = datetime.utcnow()
+        full_text = "\n\n".join(p["text"] for p in result["pages"] if p.get("text"))
+        if full_text:
+            doc.content_text = full_text[:100000]
+        db.commit()
+        try:
+            _auto_index_document(db, doc)
+        except Exception as e:  # noqa: BLE001
+            logger.warning("文档 %s 解析后重建分块失败: %s", doc_id, e)
+        logger.info("文档 %s 后台解析完成：%d 页",
+                     doc_id, result["total_pages"])
+    except Exception as e:
+        try:
+            d = db.get(Document, doc_id)
+            if d is not None:
+                d.parse_status = "error"
+                d.parse_error = str(e)[:500]
+                d.parse_step = "解析失败"
+                d.parse_finished_at = datetime.utcnow()
+                db.commit()
+        except Exception:  # noqa: BLE001
+            pass
+        logger.error("文档 %s 后台解析失败: %s", doc_id, e, exc_info=True)
+    finally:
+        db.close()
+
+
+@router.get("/documents/{doc_id}/parse-progress")
+def get_parse_progress(doc_id: int, db: Session = Depends(get_db)):
+    """查询文档解析进度（前端轮询）。"""
+    doc = db.get(Document, doc_id)
+    if doc is None:
+        raise HTTPException(status_code=404, detail="文档不存在")
+    return {
+        "doc_id": doc.id,
+        "parse_status": doc.parse_status or "pending",
+        "progress": int(doc.parse_progress or 0),
+        "step": doc.parse_step,
+        "error": doc.parse_error,
+        "started_at": doc.parse_started_at.isoformat() if doc.parse_started_at else None,
+        "finished_at": doc.parse_finished_at.isoformat() if doc.parse_finished_at else None,
+    }
 
 
 # ---------- 图片服务 ----------

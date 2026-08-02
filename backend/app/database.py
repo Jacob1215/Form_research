@@ -82,6 +82,13 @@ def _auto_migrate(engine) -> None:
         for col, col_type, default in [
             ("parse_status", "VARCHAR(32)", "'pending'"),
             ("parsed_content", "TEXT", "NULL"),
+            # V1.1.1：解析进度跟踪字段
+            ("parse_task_id", "VARCHAR(128)", "NULL"),
+            ("parse_progress", "INTEGER", "0"),
+            ("parse_step", "VARCHAR(128)", "NULL"),
+            ("parse_error", "TEXT", "NULL"),
+            ("parse_started_at", "TIMESTAMP", "NULL"),
+            ("parse_finished_at", "TIMESTAMP", "NULL"),
         ]:
             exists = conn.execute(text(
                 "SELECT 1 FROM information_schema.columns "

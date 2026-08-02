@@ -17,7 +17,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger("app.main")
 
-app = FastAPI(title="规范智能问答助手 V1.1.0", version="1.1.0")
+app = FastAPI(title="规范智能问答助手 V1.1.1", version="1.1.1")
 
 # CORS
 origins = (

@@ -54,6 +54,13 @@ class Document(Base):
     file_path: Mapped[str] = mapped_column(String(1024), nullable=False)
     content_text: Mapped[str] = mapped_column(Text, nullable=True)
     parse_status: Mapped[str] = mapped_column(String(32), nullable=False, default="pending")
+    # V1.1.1：解析进度跟踪字段（MinerU 异步任务 + 前端轮询）
+    parse_task_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    parse_progress: Mapped[int] = mapped_column(Integer, default=0)
+    parse_step: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    parse_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    parse_started_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    parse_finished_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     parsed_content: Mapped[str] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)

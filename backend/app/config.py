@@ -14,8 +14,12 @@ class Settings(BaseSettings):
     # API 密钥加密用的 Fernet key；未设置时派生一个默认 key 并告警
     LLM_ENCRYPT_KEY: str = ""
 
-    # MinerU 解析服务地址（可选）
-    MINERU_API_URL: str = ""
+    # MinerU 解析服务地址（唯一 PDF 解析后端，不降级）
+    MINERU_API_URL: str = "http://mineru:8000"
+    MINERU_TIMEOUT: float = 600.0               # MinerU 解析超时（秒），大文件需较长时间
+    MINERU_PARSE_ENDPOINT: str = "/file_parse"  # MinerU 同步解析接口（降级用）
+    MINERU_TASK_ENDPOINT: str = "/tasks"         # MinerU 异步任务接口（优先，支持进度查询）
+    MINERU_POLL_INTERVAL: float = 2.0             # 异步任务轮询间隔（秒）
 
     # Embedding 服务配置
     EMBEDDING_API_URL: str = ""

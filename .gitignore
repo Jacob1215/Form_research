@@ -35,3 +35,10 @@ Thumbs.db
 *.swp
 *.swo
 *~
+
+# 二进制大文件（wheel 包应通过宿主机预下载，不入库）
+*.whl
+
+# 测试用 PDF（不入库）
+*.pdf
+test_*
