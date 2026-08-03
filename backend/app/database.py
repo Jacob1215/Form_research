@@ -82,6 +82,7 @@ def _auto_migrate(engine) -> None:
         for col, col_type, default in [
             ("parse_status", "VARCHAR(32)", "'pending'"),
             ("parsed_content", "TEXT", "NULL"),
+            ("relative_path", "VARCHAR(1024)", "NULL"),
         ]:
             exists = conn.execute(text(
                 "SELECT 1 FROM information_schema.columns "

@@ -127,6 +127,7 @@ class DocumentOut(BaseModel):
     file_name: str
     file_type: str
     file_size: int
+    relative_path: str | None = None
     parse_status: str = "pending"
     created_at: str | None = None
     updated_at: str | None = None
@@ -139,6 +140,7 @@ class DocumentOut(BaseModel):
             file_name=obj.file_name,
             file_type=obj.file_type,
             file_size=obj.file_size,
+            relative_path=getattr(obj, "relative_path", None),
             parse_status=getattr(obj, "parse_status", "pending") or "pending",
             created_at=_to_iso(obj.created_at),
             updated_at=_to_iso(obj.updated_at),

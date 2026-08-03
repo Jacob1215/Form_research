@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import ReactMarkdown from 'react-markdown'
-import remarkGfm from 'remark-gfm'
 import Header from '../components/Header'
+import MarkdownRenderer from '../components/MarkdownRenderer'
+import { APP_NAME, APP_VERSION } from '../version'
 import {
   fetchKnowledgeBases,
   fetchStatus,
@@ -204,6 +204,7 @@ export default function Chat() {
     }
   }, [selectedKb])
 
+  /* ----- 发送消息：先插入用户消息与 AI 占位，再发起 SSE 流式请求 ----- */
   const sendMessage = useCallback(
     (text: string) => {
       const trimmed = text.trim()
@@ -448,7 +449,7 @@ export default function Chat() {
                   </div>
                   <div className="welcome-text">
                     {selectedKb
-                      ? '你好！我是规范智能问答助手 V1.0.6，请选择知识库后向我提问。'
+                      ? `你好！我是${APP_NAME} ${APP_VERSION}，请选择知识库后向我提问。`
                       : '你好！当前暂无可用知识库，请前往后台创建后再提问。'}
                   </div>
                 </div>
@@ -491,7 +492,8 @@ export default function Chat() {
                         ) : (
                           <div className="ai-answer">
                             {msg.content ? (
-                              <ReactMarkdown remarkPlugins={[remarkGfm]}>{msg.content}</ReactMarkdown>
+                              // 回答以 Markdown 渲染：支持 LLM 内嵌图片，以及后端追加的「### 相关图片」小节
+                              <MarkdownRenderer markdown={msg.content} />
                             ) : (
                               <span style={{ color: 'var(--qa-muted-foreground)' }}>（无内容）</span>
                             )}

@@ -1,5 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
+import MarkdownRenderer from '../components/MarkdownRenderer'
+import rehypeHighlight from 'rehype-highlight'
+import rehypeRaw from 'rehype-raw'
 import {
   apiDelete,
   apiGet,
@@ -7,6 +10,7 @@ import {
   parseDocument,
   type DocumentItem,
   type DocumentListResponse,
+  type FolderUploadResponse,
   type KnowledgeBase,
   type ParsedContent,
 } from '../api'
@@ -116,6 +120,7 @@ export default function KbDocuments() {
   const [activeMatch, setActiveMatch] = useState(0)
 
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const folderInputRef = useRef<HTMLInputElement>(null)
 
   const loadKb = useCallback(async () => {
     if (!kbId) return
@@ -206,7 +211,10 @@ export default function KbDocuments() {
           let msg = `上传失败 (${xhr.status})`
           try {
             const data = JSON.parse(xhr.responseText)
-            if (data.detail || data.message) msg = data.detail || data.message
+            if (data.detail || data.message) {
+              const detail = data.detail || data.message
+              msg = Array.isArray(detail) ? detail.map((e: { msg?: string }) => e.msg ?? String(e)).join('; ') : String(detail)
+            }
           } catch { /* ignore */ }
           setUploads((prev) =>
             prev.map((p) =>
@@ -258,6 +266,8 @@ export default function KbDocuments() {
       setTimeout(() => {
         setUploads((prev) => prev.filter((u) => u.status === 'uploading'))
       }, 1500)
+    } catch (err) {
+      console.error('文件上传异常:', err)
     } finally {
       setUploading(false)
     }
@@ -265,6 +275,100 @@ export default function KbDocuments() {
 
   const triggerFileInput = () => {
     fileInputRef.current?.click()
+  }
+
+  const handleFolderChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    // 先快照文件列表，再清空 input：input.value='' 会清空 FileList（live 引用），
+    // 若先清空再遍历，files 已空 → 一个文件都发不出去（422 files missing）
+    const fileArr = Array.from(e.target.files ?? [])
+    if (fileArr.length === 0) return
+    if (folderInputRef.current) folderInputRef.current.value = ''
+
+    setUploading(true)
+    const uid = `folder_${Date.now()}`
+    setUploads((prev) => [...prev, {
+      id: uid,
+      name: `文件夹上传（${fileArr.length} 个文件）`,
+      percent: 0,
+      status: 'uploading',
+    }])
+
+    try {
+      const formData = new FormData()
+      const relPaths: string[] = []
+      for (const f of fileArr) {
+        // 记录相对路径（单独 JSON 字段传递，避免塞进 multipart filename 被解析器丢目录）
+        const relPath = (f as File & { webkitRelativePath?: string }).webkitRelativePath || f.name
+        relPaths.push(relPath)
+        // 文件用普通文件名（与单文件上传 uploadOne 一致），规避解析器对 filename 中路径的处理差异
+        formData.append('files', f)
+      }
+      // 相对路径与 files 按下标一一对应
+      formData.append('relative_paths', JSON.stringify(relPaths))
+
+      const xhr = new XMLHttpRequest()
+      xhr.upload.addEventListener('progress', (ev) => {
+        if (ev.lengthComputable) {
+          const percent = Math.round((ev.loaded / ev.total) * 100)
+          setUploads((prev) => prev.map((p) => p.id === uid ? { ...p, percent } : p))
+        }
+      })
+
+      await new Promise<void>((resolve) => {
+        xhr.addEventListener('load', () => {
+          const ok = xhr.status >= 200 && xhr.status < 300
+          if (ok) {
+            try {
+              const data = JSON.parse(xhr.responseText) as FolderUploadResponse
+              setUploads((prev) => prev.map((p) =>
+                p.id === uid ? { ...p, percent: 100, status: 'success', name: `文件夹上传成功：${data.items.length} 个 md，${data.image_count} 张图片` } : p
+              ))
+            } catch {
+              setUploads((prev) => prev.map((p) =>
+                p.id === uid ? { ...p, percent: 100, status: 'success' } : p
+              ))
+            }
+          } else {
+            let msg = `上传失败 (${xhr.status})`
+            try {
+              const data = JSON.parse(xhr.responseText)
+              if (data.detail || data.message) {
+                const detail = data.detail || data.message
+                msg = Array.isArray(detail) ? detail.map((e: { msg?: string }) => e.msg ?? String(e)).join('; ') : String(detail)
+              }
+            } catch { /* ignore */ }
+            setUploads((prev) => prev.map((p) =>
+              p.id === uid ? { ...p, status: 'error', message: msg } : p
+            ))
+          }
+          resolve()
+        })
+        xhr.addEventListener('error', () => {
+          setUploads((prev) => prev.map((p) =>
+            p.id === uid ? { ...p, status: 'error', message: '网络错误' } : p
+          ))
+          resolve()
+        })
+        xhr.open('POST', `/api/admin/knowledge-bases/${kbId}/documents/folder`)
+        xhr.send(formData)
+      })
+
+      await loadDocs()
+      setTimeout(() => {
+        setUploads((prev) => prev.filter((u) => u.status === 'uploading'))
+      }, 2500)
+    } catch (err) {
+      console.error('文件夹上传异常:', err)
+      setUploads((prev) => prev.map((p) =>
+        p.id === uid ? { ...p, status: 'error', message: err instanceof Error ? err.message : '上传异常' } : p
+      ))
+    } finally {
+      setUploading(false)
+    }
+  }
+
+  const triggerFolderInput = () => {
+    folderInputRef.current?.click()
   }
 
   const handlePreview = async (doc: DocumentItem) => {
@@ -350,7 +454,33 @@ export default function KbDocuments() {
     })
   }, [parsedContent, searchQuery, activeMatch])
 
-  const totalMatches = highlightedPages.reduce((sum, p) => sum + p.count, 0)
+  const isMdPreview = previewDoc && (previewDoc.file_type === 'md' || previewDoc.file_type === 'markdown')
+
+  // md 搜索高亮
+  const highlightedMdContent = useMemo(() => {
+    const text = previewDoc?.content_text || ''
+    const q = searchQuery.trim()
+    if (!q || !text) return ''
+    const escapedQ = q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+    const regex = new RegExp(`(${escapedQ})`, 'gi')
+    let globalIndex = 0
+    return text.replace(regex, (match) => {
+      const idx = globalIndex
+      globalIndex++
+      const isActive = idx === activeMatch
+      return `<mark class="${isActive ? 'highlight-active' : ''}" id="match-${idx}">${match}</mark>`
+    })
+  }, [previewDoc?.content_text, searchQuery, activeMatch])
+
+  const mdTotalMatches = useMemo(() => {
+    if (!searchQuery.trim() || !previewDoc?.content_text) return 0
+    const escapedQ = searchQuery.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+    const regex = new RegExp(escapedQ, 'gi')
+    const matches = previewDoc.content_text.match(regex)
+    return matches ? matches.length : 0
+  }, [searchQuery, previewDoc?.content_text])
+
+  const totalMatches = isMdPreview ? mdTotalMatches : highlightedPages.reduce((sum, p) => sum + p.count, 0)
 
   const handleSearchChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     setSearchQuery(e.target.value)
@@ -370,12 +500,19 @@ export default function KbDocuments() {
   useEffect(() => {
     if (totalMatches > 0) {
       const timer = setTimeout(() => {
-        const el = document.getElementById(`match-${activeMatch}`)
-        el?.scrollIntoView({ behavior: 'smooth', block: 'center' })
-      }, 10)
+        if (isMdPreview) {
+          // md 预览：用 querySelector 找 mark 元素
+          const marks = document.querySelectorAll('.markdown-preview mark[id^="match-"]')
+          const el = marks[activeMatch] as HTMLElement | undefined
+          el?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+        } else {
+          const el = document.getElementById(`match-${activeMatch}`)
+          el?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+        }
+      }, 100)
       return () => clearTimeout(timer)
     }
-  }, [activeMatch, totalMatches])
+  }, [activeMatch, totalMatches, isMdPreview])
 
   return (
     <main className="content">
@@ -418,6 +555,28 @@ export default function KbDocuments() {
                 accept=".pdf,.doc,.docx,.txt,.md,.markdown"
               />
             </label>
+
+            <button
+              className="btn btn-secondary upload-folder-btn"
+              type="button"
+              onClick={triggerFolderInput}
+              disabled={uploading}
+            >
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
+              </svg>
+              上传 Markdown 文件夹
+            </button>
+            <input
+              type="file"
+              ref={folderInputRef}
+              onChange={handleFolderChange}
+              style={{ display: 'none' }}
+              // @ts-expect-error webkitdirectory 非标准属性
+              webkitdirectory=""
+              directory=""
+              multiple
+            />
 
             {uploads.length > 0 && (
               <div className="upload-progress">
@@ -495,6 +654,9 @@ export default function KbDocuments() {
                               <line x1="16" y1="17" x2="8" y2="17" />
                             </svg>
                             {doc.file_name}
+                            {doc.relative_path && (
+                              <span className="doc-path">{doc.relative_path}</span>
+                            )}
                           </span>
                         </td>
                         <td><span className="doc-type">{fileTypeLabel(ext)}</span></td>
@@ -591,6 +753,13 @@ export default function KbDocuments() {
             <div className="preview-body">
               {previewLoading ? (
                 <div className="preview-text">加载中...</div>
+              ) : (previewDoc.file_type === 'md' || previewDoc.file_type === 'markdown') && previewDoc.content_text ? (
+                <div className="markdown-preview">
+                  <MarkdownRenderer
+                    markdown={searchQuery.trim() && highlightedMdContent ? highlightedMdContent : previewDoc.content_text}
+                    rehypePlugins={[rehypeHighlight, rehypeRaw]}
+                  />
+                </div>
               ) : parsedContent && highlightedPages.length > 0 ? (
                 highlightedPages.map(({ page, html }, idx) => (
                   <div className="preview-page" key={idx}>

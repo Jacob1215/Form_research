@@ -1,41 +1,27 @@
-"""RAG 编排：BM25 关键词检索、结构化上下文构建、System/User 消息分离。
+"""RAG 编排：检索增强、结构化上下文构建、System/User 消息分离。
 
-优化版：
-1. System Prompt 与 Context 分离（指令/证据解耦）
-2. 要求逐字引用规范原文，禁止改写
-3. 结构化输出（直接回答 + 原文引用 + 条款说明 + 参考来源）
-4. 禁止「基于自身知识」补充规范内容，降低幻觉
-5. 支持多条款、强制性条文标注、条款冲突处理
-6. Context 结构化，携带元数据（规范名 / 相关度）
-7. jieba 中文分词 + BM25 评分 + 规范编号提取 + 文件名加权
+模块职责：
+1. retrieve / retrieve_with_hybrid：检索入口（V1.0.7 纯向量语义检索优先，异常时降级 BM25）
+2. _attach_images：为检索结果附带分块图片（V1.0.9，供大模型内嵌与对话界面展示）
+3. _build_structured_context / build_prompt：结构化上下文 + System/User 消息分离
+4. SYSTEM_PROMPT：角色定义 + 规则 + 输出格式（不含上下文）
+
+分词 / Markdown 清洗 / 规范编号提取 / BM25 打分等基础工具统一在 text_utils，此处不再重复。
 """
-import re
-import math
 import logging
-from typing import Optional
-from collections import Counter
-
-import jieba
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from .models import Document
+from .text_utils import (
+    build_query_terms,
+    strip_markdown,
+    bm25_rank,
+    substring_rank,
+)
 
 logger = logging.getLogger("app.rag")
-
-# 添加工程规范领域常用词汇，提升 jieba 分词准确性
-for _term in (
-    "焊缝探伤", "超声波探伤", "射线探伤", "强制性条文", "推荐性条文",
-    "一级焊缝", "二级焊缝", "三级焊缝", "钢结构", "焊接工程",
-    "焊缝质量", "无损检测", "焊缝表面", "内部缺陷", "探伤比例",
-    "工程质量", "验收标准", "施工质量", "设计要求", "全焊透",
-    "角焊缝", "对接焊缝", "咬边", "夹渣", "气孔", "未焊满",
-    "根部收缩", "弧坑裂纹", "电弧擦伤", "焊瘤",
-    "混凝土", "钢筋", "模板工程", "脚手架", "基坑支护",
-    "防水工程", "保温工程", "抗震设计", "防火设计", "承重结构",
-):
-    jieba.add_word(_term)
 
 # ============================================================
 # System Prompt —— 角色定义 + 规则 + 输出格式（不含上下文）
@@ -72,89 +58,18 @@ SYSTEM_PROMPT = """你是一名工程规范领域的智能问答助手，专门�
 - **检索内容不含条款号**：仍可基于检索到的原文内容回答，标注来源文档名称即可。
 - **检索结果不足**：明确说明"未在知识库中检索到相关规范条款"，建议用户更换关键词。
 
+- **相关图片展示**：若某个检索结果带有「相关图片」信息，且其中图片能直观说明用户问题，请在回答的对应位置用 Markdown 图片语法内嵌该图片：`![图片说明](/api/uploads/.../图片文件名)`，图片与文字排版一致、直接插入在文本流中。仅可使用检索结果中给出的图片地址，禁止编造。
+
 ## 禁止事项
 - 不得编造未在检索结果中出现的规范编号或条款号。
 - 不得将检索到的条文内容与自身知识混淆后输出。
+- 不得编造图片地址或图片内容。
 """
 
 
 # ============================================================
 # 检索增强组件
 # ============================================================
-
-# BM25 参数
-_BM25_K1 = 1.5
-_BM25_B = 0.75
-
-# 规范编号正则：GB 50205、GB/T 11345、JGJ 81、DBJ/T 08 等
-_SPEC_CODE_RE = re.compile(r'[A-Z]{2,4}/?[A-Z]?\s*\d{2,5}(?:[-.]?\d+)*')
-
-# 中文停用词（移除了'规定'、'要求'等工程规范领域有意义的词）
-_STOP_WORDS = frozenset({
-    '的', '了', '在', '是', '我', '有', '和', '就', '不', '人', '都', '一',
-    '一个', '上', '也', '很', '到', '说', '要', '去', '你', '会', '着', '没有',
-    '看', '好', '自己', '这', '那', '它', '他', '她', '什么', '怎么', '哪',
-    '哪些', '哪个', '为什么', '如何', '请问', '一下', '可以', '吗', '吧', '呢',
-    '啊', '哦', '嗯', '么', '请', '帮', '帮忙', '告诉', '知道', '关于', '对于',
-    '根据', '按照', '依据', '相关', '情况', '问题', '下面',
-    '是不是', '能不能', '要不要', '这个', '那个',
-    '这些', '那些', '他们', '她们', '它们', '我们', '你们', '一直', '一些',
-})
-
-
-def _strip_markdown(text: str) -> str:
-    """去除 Markdown 格式符号，保留纯文本内容。
-
-    解决 Markdown 文档中 #、**、|、> 等符号污染分词的问题。
-    """
-    # 去除代码块
-    text = re.sub(r'```[\s\S]*?```', '', text)
-    # 去除行内代码
-    text = re.sub(r'`([^`]+)`', r'\1', text)
-    # 去除标题标记
-    text = re.sub(r'^#{1,6}\s+', '', text, flags=re.MULTILINE)
-    # 去除粗体/斜体
-    text = re.sub(r'\*{1,3}([^*]+)\*{1,3}', r'\1', text)
-    text = re.sub(r'_{1,3}([^_]+)_{1,3}', r'\1', text)
-    # 去除表格分隔行
-    text = re.sub(r'^\|[\s\-:|]+\|$', '', text, flags=re.MULTILINE)
-    # 去除表格管道符
-    text = re.sub(r'\|', ' ', text)
-    # 去除引用标记
-    text = re.sub(r'^>\s+', '', text, flags=re.MULTILINE)
-    # 去除列表标记
-    text = re.sub(r'^[\s]*[-*+]\s+', '', text, flags=re.MULTILINE)
-    text = re.sub(r'^[\s]*\d+\.\s+', '', text, flags=re.MULTILINE)
-    # 去除链接，保留文本
-    text = re.sub(r'\[([^\]]+)\]\([^)]+\)', r'\1', text)
-    # 去除图片
-    text = re.sub(r'!\[([^\]]*)\]\([^)]+\)', r'\1', text)
-    # 去除水平分割线
-    text = re.sub(r'^---+$', '', text, flags=re.MULTILINE)
-    # 清理多余空行
-    text = re.sub(r'\n{3,}', '\n\n', text)
-    return text.strip()
-
-
-def _tokenize(text: str) -> list[str]:
-    """使用 jieba 分词，先去除 Markdown 格式，再过滤停用词和单字符。"""
-    clean_text = _strip_markdown(text.lower())
-    words = jieba.lcut(clean_text)
-    return [w for w in words if len(w) >= 2 and w not in _STOP_WORDS]
-
-
-def _extract_spec_codes(text: str) -> list[str]:
-    """提取规范编号，如 GB 50205、GB/T 11345、JGJ 81 等。"""
-    return [m.group().lower() for m in _SPEC_CODE_RE.finditer(text.upper())]
-
-
-def _build_query_terms(query: str) -> tuple[list[str], list[str]]:
-    """将用户查询分解为 (分词关键词, 规范编号列表)。"""
-    keywords = _tokenize(query)
-    spec_codes = _extract_spec_codes(query)
-    # 规范编号也作为关键词的一部分，但赋予更高权重
-    return keywords, spec_codes
-
 
 def _find_relevant_section(text: str, keywords: list[str], spec_codes: list[str], window: int = 1500) -> str:
     """在长文档中定位关键词最密集的区域，截取上下文窗口。"""
@@ -209,10 +124,10 @@ def _find_relevant_section(text: str, keywords: list[str], spec_codes: list[str]
 def retrieve(db: Session, kb_id: int, query: str, top_k: int = 5) -> list[tuple[Document, float]]:
     """纯 BM25 关键词检索（保留作为降级方案）。
 
-    返回 (document, score) 列表。
-    当混合检索不可用时作为兜底。
+    返回 (document, score) 列表。当混合检索不可用时作为兜底。
+    打分逻辑复用 text_utils.bm25_rank / substring_rank，行为与重构前一致。
     """
-    query_keywords, spec_codes = _build_query_terms(query.strip())
+    query_keywords, spec_codes = build_query_terms(query.strip())
     if not query_keywords and not spec_codes:
         return []
 
@@ -225,99 +140,31 @@ def retrieve(db: Session, kb_id: int, query: str, top_k: int = 5) -> list[tuple[
     if not docs:
         return []
 
-    # 所有查询词（普通关键词 + 规范编号）
+    # 所有查询词（普通关键词 + 规范编号，仅用于日志）
     all_query_terms = list(query_keywords)
     for code in spec_codes:
         if code not in all_query_terms:
             all_query_terms.append(code)
 
-    # 对每个文档分词并统计词频
-    doc_data: list[tuple[Document, Counter, int]] = []
-    for doc in docs:
-        text = doc.content_text or ""
-        if not text:
-            continue
-        tokens = _tokenize(text)
-        tokens.extend(_extract_spec_codes(text))
-        if not tokens:
-            continue
-        doc_data.append((doc, Counter(tokens), len(tokens)))
+    items = [(doc, doc.content_text or "", doc.file_name or "") for doc in docs]
 
-    if not doc_data:
-        return []
-
-    # 平均文档长度
-    avgdl = sum(dl for _, _, dl in doc_data) / len(doc_data)
-    doc_count = len(doc_data)
-
-    # term -> 包含该词的文档数（用于 IDF）
-    term_doc_freq: dict[str, int] = {}
-    for _, freq, _ in doc_data:
-        for term in freq:
-            term_doc_freq[term] = term_doc_freq.get(term, 0) + 1
-
-    scored: list[tuple[Document, float]] = []
-    for doc, freq, doc_len in doc_data:
-        score = 0.0
-
-        for term in all_query_terms:
-            tf = freq.get(term, 0)
-            if tf == 0:
-                continue
-
-            # IDF
-            n_qi = term_doc_freq.get(term, 0)
-            idf = math.log((doc_count - n_qi + 0.5) / (n_qi + 0.5) + 1.0)
-
-            # BM25 TF
-            tf_score = (tf * (_BM25_K1 + 1)) / (
-                tf + _BM25_K1 * (1 - _BM25_B + _BM25_B * doc_len / avgdl)
-            )
-
-            term_score = idf * tf_score
-
-            # 规范编号匹配加权 x5（从 3x 提升到 5x）
-            if term in spec_codes:
-                term_score *= 5.0
-
-            score += term_score
-
-        # 文件名匹配加权
-        if score > 0:
-            doc_name_lower = (doc.file_name or "").lower()
-            for kw in query_keywords:
-                if kw in doc_name_lower:
-                    score += 2.0
-            for code in spec_codes:
-                if code in doc_name_lower:
-                    score += 5.0
-
-        if score > 0:
-            scored.append((doc, score))
-
-    scored.sort(key=lambda x: x[1], reverse=True)
+    # BM25 打分（公共核心，分数/排序与重构前完全一致）
+    ranked = bm25_rank(items, query_keywords, spec_codes, top_k=top_k)
+    scored = [(doc, score) for doc, score, _text, _fname in ranked]
 
     # BM25 无结果时，降级为子串匹配兜底
     if not scored:
         logger.warning(
             "BM25 无结果，降级子串匹配: query=%r terms=%r kb_id=%d docs=%d",
-            query[:50], all_query_terms, kb_id, len(doc_data),
+            query[:50], all_query_terms, kb_id, len(docs),
         )
-        for doc, freq, doc_len in doc_data:
-            text_lower = _strip_markdown((doc.content_text or "").lower())
-            score = 0.0
-            for term in all_query_terms:
-                count = text_lower.count(term)
-                if count > 0:
-                    score += count
-            if score > 0:
-                scored.append((doc, score))
-        scored.sort(key=lambda x: x[1], reverse=True)
+        scored = substring_rank(items, query_keywords, spec_codes, top_k=top_k)
         logger.info("子串兜底结果: %d 条", len(scored))
 
     logger.info(
         "BM25 检索完成: query=%r terms=%r kb_id=%d docs=%d with_content=%d results=%d",
-        query[:50], all_query_terms, kb_id, len(docs), len(doc_data), len(scored),
+        query[:50], all_query_terms, kb_id, len(docs),
+        len([d for d in docs if d.content_text and d.content_text.strip()]), len(scored),
     )
     return scored[:top_k]
 
@@ -356,13 +203,15 @@ def retrieve_with_hybrid(
                 "混合检索成功: query=%r kb_id=%d results=%d",
                 query[:50], kb_id, len(results),
             )
+            # V1.0.9：为检索结果附带分块中的图片（alt, url），供 LLM 上下文与对话界面展示
+            _attach_images(db, kb_id, results)
             return results
     except Exception as e:
         logger.warning("混合检索异常: %s，降级为纯 BM25", e)
 
     # 降级：纯 BM25 文档检索
     bm25_results = retrieve(db, kb_id, search_query, top_k=top_k)
-    return [
+    results = [
         {
             "doc_id": doc.id,
             "chunk_index": -1,
@@ -374,6 +223,38 @@ def retrieve_with_hybrid(
         }
         for doc, score in bm25_results
     ]
+    # V1.0.9：BM25 降级路径同样附带图片
+    _attach_images(db, kb_id, results)
+    return results
+
+
+def _attach_images(db: Session, kb_id: int, results: list[dict]) -> None:
+    """为检索结果附带分块中的图片（alt, url）列表。
+
+    V1.0.9：md 文档分块中的图片引用对 LLM 不可见，需在把上下文交给大模型之前，
+    将图片提取为绝对 /api/uploads URL 挂在每个结果上。提取基于分块内容
+    （result["content"]），仅对 md/markdown 文档生效（PDF/txt 文本中的字面
+    ![]()/<img> 属于误报，跳过），并对重写后的地址做磁盘存在性校验。
+    """
+    from .image_utils import doc_rel_dir, extract_images_from_content
+
+    doc_ids = {r.get("doc_id") for r in results if isinstance(r, dict) and r.get("doc_id")}
+    if not doc_ids:
+        return
+    docs = db.execute(select(Document).where(Document.id.in_(doc_ids))).scalars().all()
+    doc_map = {d.id: d for d in docs}
+    for r in results:
+        if not isinstance(r, dict):
+            continue
+        doc = doc_map.get(r.get("doc_id"))
+        if doc is None:
+            r["images"] = []
+            continue
+        rel_dir = doc_rel_dir(doc.kb_id, doc.file_path or "")
+        r["images"] = extract_images_from_content(
+            r.get("content", ""), kb_id, rel_dir,
+            doc.file_type, max_images=9,
+        )
 
 
 def _build_structured_context(
@@ -389,7 +270,7 @@ def _build_structured_context(
     每条包含：序号、规范名称（文档名）、相关度评分、原文内容。
     对长文档自动定位关键词最密集的段落截取。
     """
-    keywords, spec_codes = _build_query_terms(query)
+    keywords, spec_codes = build_query_terms(query)
 
     blocks: list[str] = []
     for i, item in enumerate(results, 1):
@@ -402,7 +283,7 @@ def _build_structured_context(
 
             # 使用分块内容（已是最相关段落）
             raw_text = item.get("content", "")
-            clean_text = _strip_markdown(raw_text)
+            clean_text = strip_markdown(raw_text)
 
             # 如果分块内容较长，进一步定位关键词密集区域
             if len(clean_text) > 2000:
@@ -414,20 +295,29 @@ def _build_structured_context(
             score_info = f"混合相关度：{score:.2f}"
             if vector_score > 0:
                 score_info += f"（语义：{vector_score:.2f}，关键词：{bm25_score:.2f}）"
+
+            # V1.0.9：附带检索结果中的相关图片（最多 3 张），供大模型内嵌展示
+            image_marks = [
+                f"![{alt}]({url})"
+                for alt, url in (item.get("images") or [])[:3]
+            ]
+            images_line = "\n相关图片：" + " ".join(image_marks) if image_marks else ""
         else:
             # 旧格式 (Document, float)
             doc, score = item
             file_name = doc.file_name
             raw_text = doc.content_text or ""
-            clean_text = _strip_markdown(raw_text)
+            clean_text = strip_markdown(raw_text)
             section = _find_relevant_section(clean_text, keywords, spec_codes)
             score_info = f"相关度：{score:.2f}"
+            images_line = ""
 
         block = (
             f"【检索结果 {i}】\n"
             f"规范名称：《{file_name}》\n"
             f"{score_info}\n"
             f"原文内容：{section}"
+            f"{images_line}"
         )
         blocks.append(block)
 

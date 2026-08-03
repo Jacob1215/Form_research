@@ -1,4 +1,5 @@
 import { Link } from 'react-router-dom'
+import { APP_VERSION } from '../version'
 
 interface SidebarProps {
   active: 'llm' | 'kb'
@@ -47,7 +48,7 @@ export default function Sidebar({ active }: SidebarProps) {
         </Link>
       </nav>
       <div className="sidebar-footer">
-        <div className="sidebar-version">v1.0.0</div>
+        <div className="sidebar-version">{APP_VERSION}</div>
       </div>
     </aside>
   )

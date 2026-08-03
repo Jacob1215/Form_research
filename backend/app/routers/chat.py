@@ -51,6 +51,33 @@ def _sse(data: dict) -> str:
     return f"data: {json.dumps(data, ensure_ascii=False)}\n\n"
 
 
+def _build_image_fallback_section(results: list[dict], assistant_text: str) -> str:
+    """汇总检索结果中尚未出现在回答里的图片，构造 Markdown「相关图片」小节。
+
+    V1.0.9：若大模型未在回答中内嵌检索到的图片，则追加该小节，保证查询结果
+    与图片相关时对话界面必然展示图片。URL 用子串包含判断，容忍大模型断行/改写
+    链接；最多追加 6 张，防止污染回答。
+    """
+    seen_urls: set[str] = set()
+    picked: list[str] = []
+    for r in results:
+        images = r.get("images") if isinstance(r, dict) else None
+        for alt, url in images or []:
+            if url in seen_urls:
+                continue
+            seen_urls.add(url)
+            if url in assistant_text:  # LLM 已内嵌该图，跳过
+                continue
+            picked.append(f"![{alt}]({url})")
+            if len(picked) >= 6:
+                break
+        if len(picked) >= 6:
+            break
+    if not picked:
+        return ""
+    return "\n\n### 相关图片\n\n" + "\n".join(picked)
+
+
 def _stream_chat(request: Request, kb_id: int, message: str, conversation_id: Optional[int]):
     """生成 SSE 流。使用独立的 DB 会话，避免与请求作用域冲突。"""
     db = SessionLocal()
@@ -89,7 +116,7 @@ def _stream_chat(request: Request, kb_id: int, message: str, conversation_id: Op
             yield _sse({"type": "error", "message": "LLM 密钥无法解密"})
             return
 
-        # === RAG 检索（V1.0.7 方案 A：纯向量语义检索） ===
+        # === RAG 检索（向量语义检索，retrieve_with_hybrid 内部异常时降级 BM25） ===
         rewritten_query = message
         try:
             # 查询改写（可选，用 LLM 将口语化查询扩展为专业术语）
@@ -105,13 +132,13 @@ def _stream_chat(request: Request, kb_id: int, message: str, conversation_id: Op
                 except Exception as e:
                     logger.debug("查询改写跳过: %s", e)
 
-            # 纯向量检索（不再降级 BM25）
+            # 向量检索（V1.0.7 方案 A：纯向量；检索不可用时内部降级 BM25）
             results = retrieve_with_hybrid(
                 db, kb_id, message,
                 top_k=5, rewritten_query=rewritten_query,
             )
         except Exception as e:  # noqa: BLE001
-            # V1.0.7：检索失败不降级 BM25，直接报错让用户感知问题
+            # 检索异常：直接报错让用户感知问题
             logger.warning("向量检索失败: %s", e)
             yield _sse({
                 "type": "error",
@@ -157,6 +184,14 @@ def _stream_chat(request: Request, kb_id: int, message: str, conversation_id: Op
             return
 
         assistant_text = "".join(assistant_content_parts)
+
+        # V1.0.9：检索结果相关图片兜底追加。若回答中未内嵌检索到的图片，则追加
+        # 「相关图片」小节，保证查询结果与图片相关时对话界面必然展示图片。
+        image_section = _build_image_fallback_section(results, assistant_text)
+        if image_section:
+            assistant_text += image_section
+            yield _sse({"type": "token", "content": image_section})
+
         assistant_msg = Message(
             conv_id=conv.id,
             role="assistant",

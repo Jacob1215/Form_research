@@ -9,6 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from .config import settings
 from .database import init_db
+from .version import APP_NAME, APP_VERSION
 from .routers import chat, admin_llm, admin_kb, admin_docs
 
 logging.basicConfig(
@@ -17,7 +18,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger("app.main")
 
-app = FastAPI(title="规范智能问答助手 V1.1.0", version="1.1.0")
+app = FastAPI(title=f"{APP_NAME} {APP_VERSION}", version=APP_VERSION)
 
 # CORS
 origins = (
@@ -48,6 +49,27 @@ app.include_router(chat.router)
 app.include_router(admin_llm.router)
 app.include_router(admin_kb.router)
 app.include_router(admin_docs.router)
+
+
+# ---------- 上传文件静态资源托管（供 Markdown 预览中的图片访问） ----------
+
+def _safe_join(base: str, *paths: str) -> str | None:
+    """安全拼接路径，防止目录穿越（.. 越界返回 None）。"""
+    abs_base = os.path.abspath(base)
+    candidate = os.path.abspath(os.path.join(abs_base, *paths))
+    if not candidate.startswith(abs_base):
+        return None
+    return candidate
+
+
+@app.get("/api/uploads/{kb_id}/{file_path:path}")
+def serve_upload(kb_id: str, file_path: str):
+    """提供上传文件（图片等）的访问。仅允许 uploads/{kb_id}/ 目录下。"""
+    upload_dir = settings.UPLOAD_DIR
+    target = _safe_join(os.path.join(upload_dir, kb_id), file_path)
+    if target is None or not os.path.isfile(target):
+        return JSONResponse({"detail": "Not Found"}, status_code=404)
+    return FileResponse(target)
 
 
 # ---------- 静态资源托管 ----------
@@ -83,12 +105,27 @@ def root():
     """根路径：返回 index.html；若没有前端则返回健康检查 JSON。"""
     if STATIC_DIR:
         return FileResponse(os.path.join(STATIC_DIR, "index.html"))
-    return JSONResponse({"name": "规范智能问答助手", "status": "ok", "version": "1.0.0"})
+    return JSONResponse({"name": APP_NAME, "status": "ok", "version": APP_VERSION})
+
+
+def _read_build_time() -> str | None:
+    """读取构建标记（Dockerfile 写入 /app/build_time.txt），不存在则返回 None（兼容旧镜像）。"""
+    for p in ("/app/build_time.txt", "./build_time.txt"):
+        try:
+            with open(p, "r", encoding="utf-8") as f:
+                return f.read().strip()
+        except OSError:
+            continue
+    return None
 
 
 @app.get("/health")
 def health():
-    return {"status": "ok"}
+    return {
+        "status": "ok",
+        "version": APP_VERSION,
+        "build_time": _read_build_time(),
+    }
 
 
 # SPA fallback：所有非 /api 路径回退到 index.html

@@ -1,4 +1,5 @@
 import { Link } from 'react-router-dom'
+import { APP_NAME, APP_VERSION } from '../version'
 
 interface HeaderProps {
   activeNav: 'chat' | 'backend'
@@ -31,7 +32,7 @@ export default function Header({ activeNav }: HeaderProps) {
               strokeLinecap="round"
             />
           </svg>
-          <span className="brand-title">规范智能问答助手 <span className="brand-version">V1.0.6</span></span>
+          <span className="brand-title">{APP_NAME} <span className="brand-version">{APP_VERSION}</span></span>
         </div>
         <nav className="header-nav">
           <Link

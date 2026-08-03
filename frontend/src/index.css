@@ -1322,6 +1322,13 @@ table.config-table {
   color: var(--qa-foreground);
 }
 .doc-name svg { color: var(--qa-muted-foreground); flex: 0 0 auto; }
+.doc-path {
+  display: block;
+  font-size: 0.8em;
+  font-weight: 400;
+  color: var(--qa-muted-foreground);
+  word-break: break-all;
+}
 .doc-type {
   display: inline-flex;
   align-items: center;
@@ -1552,6 +1559,16 @@ table.config-table {
   padding: 0 1px;
 }
 .preview-text mark.highlight-active {
+  background: #fb923c;
+  color: #fff;
+}
+.markdown-preview mark {
+  background: #fef08a;
+  color: inherit;
+  border-radius: 2px;
+  padding: 0 1px;
+}
+.markdown-preview mark.highlight-active {
   background: #fb923c;
   color: #fff;
 }

@@ -9,14 +9,11 @@
 - 默认使用纯向量检索（RETRIEVE_MODE=vector_only），不再自动降级 BM25
 - 向量检索不可用时抛异常，提示用户重新索引，而非静默降级
 - BM25 相关函数保留作为回滚备选（切换 RETRIEVE_MODE=hybrid 可恢复混合检索）
+- BM25 打分复用 text_utils.bm25_rank / substring_rank，与 rag_service.retrieve 共享同一核心
 - 规范编号精确匹配在 BM25 模式中给予高权重
 """
-import math
 import logging
-from collections import Counter
-from typing import Optional
 
-import jieba
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -24,22 +21,12 @@ from .models import Document, DocumentChunk
 from .config import settings
 from .embedding_service import embedding_service
 from .vector_store import VectorStore
+from .text_utils import (
+    bm25_rank,
+    substring_rank,
+)
 
 logger = logging.getLogger("app.hybrid_search")
-
-# ============================================================
-# BM25 参数
-# ============================================================
-_BM25_K1 = 1.5
-_BM25_B = 0.75
-
-# 从 rag_service 导入核心分词/清洁函数
-from .rag_service import (
-    _tokenize,
-    _extract_spec_codes,
-    _build_query_terms,
-    _strip_markdown,
-)
 
 
 def _bm25_search_chunks(
@@ -52,6 +39,7 @@ def _bm25_search_chunks(
     """BM25 关键词检索分块。
 
     返回: list[(chunk_id, bm25_score, chunk_content, doc_file_name)]
+    打分复用 text_utils.bm25_rank，行为与重构前一致。
     """
     # 获取知识库中所有分块
     stmt = (
@@ -66,72 +54,9 @@ def _bm25_search_chunks(
     if not rows:
         return []
 
-    all_query_terms = list(query_keywords)
-    for code in spec_codes:
-        if code not in all_query_terms:
-            all_query_terms.append(code)
-
-    if not all_query_terms:
-        return []
-
-    # 对每个分块分词并统计词频
-    chunk_data: list[tuple[int, str, str | None, Counter, int]] = []
-    for chunk, file_name in rows:
-        text = chunk.content or ""
-        if not text:
-            continue
-        tokens = _tokenize(text)
-        tokens.extend(_extract_spec_codes(text))
-        if not tokens:
-            continue
-        chunk_data.append((chunk.id, text, file_name, Counter(tokens), len(tokens)))
-
-    if not chunk_data:
-        return []
-
-    # 平均分块长度
-    avgdl = sum(dl for _, _, _, _, dl in chunk_data) / len(chunk_data)
-    doc_count = len(chunk_data)
-
-    # term -> 包含该词的文档数（IDF）
-    term_doc_freq: dict[str, int] = {}
-    for _, _, _, freq, _ in chunk_data:
-        for term in freq:
-            term_doc_freq[term] = term_doc_freq.get(term, 0) + 1
-
-    scored: list[tuple[int, float, str, str | None]] = []
-    for chunk_id, content, file_name, freq, doc_len in chunk_data:
-        score = 0.0
-        for term in all_query_terms:
-            tf = freq.get(term, 0)
-            if tf == 0:
-                continue
-            n_qi = term_doc_freq.get(term, 0)
-            idf = math.log((doc_count - n_qi + 0.5) / (n_qi + 0.5) + 1.0)
-            tf_score = (tf * (_BM25_K1 + 1)) / (
-                tf + _BM25_K1 * (1 - _BM25_B + _BM25_B * doc_len / avgdl)
-            )
-            term_score = idf * tf_score
-            # 规范编号匹配加权 x5
-            if term in spec_codes:
-                term_score *= 5.0
-            score += term_score
-
-        # 文件名匹配加权
-        if score > 0 and file_name:
-            fname_lower = file_name.lower()
-            for kw in query_keywords:
-                if kw in fname_lower:
-                    score += 2.0
-            for code in spec_codes:
-                if code in fname_lower:
-                    score += 5.0
-
-        if score > 0:
-            scored.append((chunk_id, score, content, file_name))
-
-    scored.sort(key=lambda x: x[1], reverse=True)
-    return scored[:top_k]
+    items = [(chunk.id, chunk.content or "", file_name) for chunk, file_name in rows]
+    ranked = bm25_rank(items, query_keywords, spec_codes, top_k=top_k)
+    return [(chunk_id, score, text, file_name) for chunk_id, score, text, file_name in ranked]
 
 
 def _bm25_search_docs(
@@ -144,6 +69,7 @@ def _bm25_search_docs(
     """BM25 关键词检索文档（降级方案，当没有分块时使用）。
 
     返回: list[(Document, score)]
+    打分复用 text_utils.bm25_rank / substring_rank，行为与重构前一致。
     """
     stmt = select(Document).where(
         Document.kb_id == kb_id,
@@ -153,77 +79,14 @@ def _bm25_search_docs(
     if not docs:
         return []
 
-    all_query_terms = list(query_keywords)
-    for code in spec_codes:
-        if code not in all_query_terms:
-            all_query_terms.append(code)
-
-    doc_data: list[tuple[Document, Counter, int]] = []
-    for doc in docs:
-        text = doc.content_text or ""
-        if not text:
-            continue
-        tokens = _tokenize(text)
-        tokens.extend(_extract_spec_codes(text))
-        if not tokens:
-            continue
-        doc_data.append((doc, Counter(tokens), len(tokens)))
-
-    if not doc_data:
-        return []
-
-    avgdl = sum(dl for _, _, dl in doc_data) / len(doc_data)
-    doc_count = len(doc_data)
-
-    term_doc_freq: dict[str, int] = {}
-    for _, freq, _ in doc_data:
-        for term in freq:
-            term_doc_freq[term] = term_doc_freq.get(term, 0) + 1
-
-    scored: list[tuple[Document, float]] = []
-    for doc, freq, doc_len in doc_data:
-        score = 0.0
-        for term in all_query_terms:
-            tf = freq.get(term, 0)
-            if tf == 0:
-                continue
-            n_qi = term_doc_freq.get(term, 0)
-            idf = math.log((doc_count - n_qi + 0.5) / (n_qi + 0.5) + 1.0)
-            tf_score = (tf * (_BM25_K1 + 1)) / (
-                tf + _BM25_K1 * (1 - _BM25_B + _BM25_B * doc_len / avgdl)
-            )
-            term_score = idf * tf_score
-            if term in spec_codes:
-                term_score *= 5.0
-            score += term_score
-
-        if score > 0:
-            doc_name_lower = (doc.file_name or "").lower()
-            for kw in query_keywords:
-                if kw in doc_name_lower:
-                    score += 2.0
-            for code in spec_codes:
-                if code in doc_name_lower:
-                    score += 5.0
-
-        if score > 0:
-            scored.append((doc, score))
-
-    scored.sort(key=lambda x: x[1], reverse=True)
+    items = [(doc, doc.content_text or "", doc.file_name) for doc in docs]
+    ranked = bm25_rank(items, query_keywords, spec_codes, top_k=top_k)
+    scored = [(doc, score) for doc, score, _text, _fname in ranked]
 
     # 降级子串匹配
     if not scored:
         logger.warning("BM25 文档检索无结果，降级子串匹配")
-        for doc, freq, doc_len in doc_data:
-            text_lower = _strip_markdown((doc.content_text or "").lower())
-            score = 0.0
-            for term in all_query_terms:
-                count = text_lower.count(term)
-                if count > 0:
-                    score += count
-            if score > 0:
-                scored.append((doc, score))
-        scored.sort(key=lambda x: x[1], reverse=True)
+        scored = substring_rank(items, query_keywords, spec_codes, top_k=top_k)
 
     return scored[:top_k]
 

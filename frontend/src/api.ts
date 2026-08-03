@@ -71,6 +71,7 @@ export interface DocumentItem {
   file_name: string
   file_type?: string
   file_size?: number
+  relative_path?: string | null
   content_text?: string | null
   parse_status?: string
   parsed_content?: string | null
@@ -109,6 +110,12 @@ export interface ParseResult {
 
 export async function parseDocument(docId: string): Promise<ParseResult> {
   return apiPost<ParseResult>(`/api/admin/documents/${docId}/parse`, {})
+}
+
+export interface FolderUploadResponse {
+  items: DocumentItem[]
+  image_count: number
+  skipped: number
 }
 
 export interface ChatReference {

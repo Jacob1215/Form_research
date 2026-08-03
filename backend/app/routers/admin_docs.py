@@ -6,7 +6,7 @@ import os
 import json
 import logging
 
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
 from fastapi.responses import FileResponse
 from sqlalchemy import select, func
 from sqlalchemy.orm import Session
@@ -15,6 +15,7 @@ from ..database import get_db
 from ..config import settings
 from ..models import KnowledgeBase, Document
 from ..schemas import DocumentOut, DocumentDetail
+from ..image_utils import rewrite_md_image_paths
 
 logger = logging.getLogger("app.admin_docs")
 
@@ -344,6 +345,135 @@ def upload_documents(
     return {"items": [DocumentOut.from_orm(d).model_dump() for d in created]}
 
 
+# ---------- 文件夹上传 ----------
+
+# 文件夹上传支持的文件类型（md 创建 Document；图片直接落地）
+FOLDER_DOC_EXT = {"md", "markdown"}
+FOLDER_IMG_EXT = {"png", "jpg", "jpeg", "gif", "webp", "svg", "bmp"}
+# 过滤掉的系统文件
+_IGNORE_FILES = {".ds_store", "thumbs.db", "desktop.ini", "__macosx"}
+
+
+@router.post("/knowledge-bases/{kb_id}/documents/folder")
+def upload_folder(
+    kb_id: int,
+    files: list[UploadFile] = File(...),
+    relative_paths: str | None = Form(None),
+    db: Session = Depends(get_db),
+):
+    """文件夹批量上传：保留相对目录结构。
+
+    - .md/.markdown 文件：创建 Document 记录，content_text 直接读取 md 全文
+    - 图片文件：存到对应目录（不建 Document），供 md 预览时引用
+    - 其他文件：忽略
+    - 系统文件（.DS_Store 等）：忽略
+
+    前端通过 webkitdirectory 选文件夹，file.webkitRelativePath 携带相对路径，
+    通过 relative_paths（JSON 数组）字段传递，与 files 按下标一一对应。
+    """
+    kb = db.get(KnowledgeBase, kb_id)
+    if kb is None:
+        raise HTTPException(status_code=404, detail="知识库不存在")
+    if not files:
+        raise HTTPException(status_code=400, detail="未提供文件")
+
+    # 解析前端传入的相对路径列表（与 files 按下标对齐）
+    paths: list[str] = []
+    if relative_paths:
+        try:
+            raw = json.loads(relative_paths)
+            if isinstance(raw, list):
+                paths = [str(p) for p in raw]
+        except (json.JSONDecodeError, ValueError):
+            logger.warning("relative_paths 解析失败，回退使用文件名: %s", relative_paths[:200])
+
+    kb_dir = os.path.join(settings.UPLOAD_DIR, str(kb_id))
+    os.makedirs(kb_dir, exist_ok=True)
+
+    created: list[Document] = []
+    img_count = 0
+    skipped = 0
+
+    for i, upload in enumerate(files):
+        filename = upload.filename or ""
+        # 优先使用前端传入的相对路径（保留目录结构）；缺失/为空时回退到 upload.filename（兼容旧前端）
+        relative_path = paths[i] if i < len(paths) and paths[i] else filename
+        if not relative_path:
+            relative_path = os.path.basename(filename)
+
+        ext = _ext(filename)
+        low_name = filename.lower()
+
+        # 跳过系统文件
+        if any(ign in low_name for ign in _IGNORE_FILES):
+            skipped += 1
+            continue
+
+        data = upload.file.read()
+        if len(data) > MAX_SIZE_BYTES:
+            logger.warning("文件过大（>%dMB），跳过: %s", settings.MAX_UPLOAD_SIZE_MB, filename)
+            skipped += 1
+            continue
+
+        # 构造存储路径：保留相对目录结构
+        # 标准化路径分隔符
+        rel_path = relative_path.replace("\\", "/").lstrip("./")
+        save_path = os.path.join(kb_dir, rel_path)
+        os.makedirs(os.path.dirname(save_path), exist_ok=True)
+        with open(save_path, "wb") as f:
+            f.write(data)
+
+        if ext in FOLDER_DOC_EXT:
+            # md 文件：创建 Document
+            content_text = data.decode("utf-8", errors="ignore")[:100000]
+            doc = Document(
+                kb_id=kb_id,
+                file_name=os.path.basename(filename),
+                file_type="md",
+                file_size=len(data),
+                file_path=save_path,
+                relative_path=rel_path,
+                content_text=content_text,
+                parse_status="done",
+                parsed_content=json.dumps(
+                    {"pages": [{"page_num": 1, "text": content_text, "tables": [], "images": []}],
+                     "total_pages": 1},
+                    ensure_ascii=False,
+                ),
+            )
+            db.add(doc)
+            db.flush()
+            created.append(doc)
+        elif ext in FOLDER_IMG_EXT:
+            img_count += 1
+        else:
+            skipped += 1
+
+    db.commit()
+    for d in created:
+        db.refresh(d)
+
+    _refresh_kb_doc_count(db, kb_id)
+
+    # 自动索引 md 文档
+    for d in created:
+        try:
+            _auto_index_document(db, d)
+        except Exception as e:
+            logger.warning("自动索引文档 %d 失败: %s", d.id, e)
+
+    logger.info(
+        "文件夹上传完成 kb_id=%d: %d 个 md 文档, %d 张图片, %d 个跳过",
+        kb_id, len(created), img_count, skipped,
+    )
+
+    return {
+        "items": [DocumentOut.from_orm(d).model_dump() for d in created],
+        "image_count": img_count,
+        "skipped": skipped,
+    }
+
+
 # ---------- 文档详情 ----------
 
 @router.get("/documents/{doc_id}")
@@ -351,13 +481,19 @@ def get_document(doc_id: int, db: Session = Depends(get_db)):
     doc = db.get(Document, doc_id)
     if doc is None:
         raise HTTPException(status_code=404, detail="文档不存在")
+
+    # 对 md 文件：返回重写图片路径后的 content_text（供前端 ReactMarkdown 直接渲染）
+    display_text = doc.content_text
+    if doc.file_type in ("md", "markdown") and display_text:
+        display_text = rewrite_md_image_paths(display_text, doc.kb_id, doc.file_path)
+
     return DocumentDetail(
         id=doc.id,
         kb_id=doc.kb_id,
         file_name=doc.file_name,
         file_type=doc.file_type,
         file_size=doc.file_size,
-        content_text=doc.content_text,
+        content_text=display_text,
         parsed_content=doc.parsed_content,
         parse_status=getattr(doc, "parse_status", "pending") or "pending",
         created_at=doc.created_at.isoformat() if doc.created_at else None,

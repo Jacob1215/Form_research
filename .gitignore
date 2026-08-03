@@ -35,3 +35,9 @@ Thumbs.db
 *.swp
 *.swo
 *~
+
+# 本地构建产物 / 实验脚本（不纳入版本控制）
+*.whl
+mineru_api/
+extract_pages.py
+list_api.py

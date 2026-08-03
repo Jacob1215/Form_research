@@ -1,14 +1,15 @@
-# 规范智能问答助手系统 — 两容器编排（应用服务 + 数据库）
+# 规范智能问答助手系统 — test 分支隔离部署（独立容器名/端口/数据库卷）
 # 使用：docker compose up -d --build
 services:
   app:
+    container_name: form_research-app-test
     build:
       context: .
       dockerfile: backend/Dockerfile
     ports:
-      - "80:8000"          # 宿主机 80 → 容器 8000；如 80 被占用可改为 "8080:8000"
+      - "8080:8000"        # test 分支用 8080，避免与 MinerU 分支的 80 冲突
     volumes:
-      - ./uploads:/app/uploads        # 原始文档持久化
+      - ./uploads:/app/uploads        # 原始文档持久化（共享宿主机目录）
     environment:
       - DATABASE_URL=postgresql://app:app@db:5432/qa
       - LLM_ENCRYPT_KEY=${LLM_ENCRYPT_KEY:-}
@@ -32,13 +33,14 @@ services:
     restart: unless-stopped
 
   db:
+    container_name: form_research-db-test
     image: pgvector/pgvector:pg16
     environment:
       - POSTGRES_USER=app
       - POSTGRES_PASSWORD=app
       - POSTGRES_DB=qa
     volumes:
-      - pgdata:/var/lib/postgresql/data   # 必须用命名卷：bind mount 到 Windows(NTFS) 目录会让 initdb chmod 失败
+      - pgdata_test:/var/lib/postgresql/data   # test 分支独立卷，与 MinerU 分支数据库隔离
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U app -d qa"]
       interval: 5s
@@ -47,4 +49,4 @@ services:
     restart: unless-stopped
 
 volumes:
-  pgdata:
+  pgdata_test:

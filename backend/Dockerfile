@@ -32,7 +32,8 @@ WORKDIR /app
 # torch 走 CPU 版可避免拉取 CUDA 包，镜像体积从 ~2.5GB 降到 ~1.5GB
 COPY backend/requirements.txt ./requirements.txt
 ENV PIP_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple \
-    PIP_EXTRA_INDEX_URL=https://download.pytorch.org/whl/cpu \
+    PIP_EXTRA_INDEX_URL=https://mirrors.tuna.tsinghua.edu.cn/pytorch/whl/cpu \
+    PIP_DEFAULT_TIMEOUT=120 \
     HF_ENDPOINT=https://hf-mirror.com
 RUN pip install --no-cache-dir -r requirements.txt
 
@@ -48,6 +49,9 @@ COPY --from=frontend-build /frontend/dist ./static
 
 # 上传文件持久化目录
 RUN mkdir -p /app/uploads
+
+# 构建标记：记录镜像构建时间，便于确认容器是否为新镜像（放在所有代码 COPY 之后，任何源码变更都会使该层缓存失效、重新写入新时间戳）
+RUN date -u +"%Y-%m-%d %H:%M:%S UTC" > /app/build_time.txt
 ENV UPLOAD_DIR=/app/uploads
 ENV STATIC_DIR=/app/static
 

@@ -52,6 +52,7 @@ class Document(Base):
     file_type: Mapped[str] = mapped_column(String(32), nullable=False)
     file_size: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     file_path: Mapped[str] = mapped_column(String(1024), nullable=False)
+    relative_path: Mapped[str] = mapped_column(String(1024), nullable=True)
     content_text: Mapped[str] = mapped_column(Text, nullable=True)
     parse_status: Mapped[str] = mapped_column(String(32), nullable=False, default="pending")
     parsed_content: Mapped[str] = mapped_column(Text, nullable=True)
