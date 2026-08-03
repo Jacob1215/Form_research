@@ -1,5 +1,6 @@
 """SQLAlchemy 2.0 ORM 模型定义。"""
 from datetime import datetime
+from typing import Optional
 from sqlalchemy import (
     Integer, String, Text, Float, Boolean, ForeignKey, DateTime, JSON
 )
@@ -88,7 +89,8 @@ class Conversation(Base):
     __tablename__ = "conversations"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    kb_id: Mapped[int] = mapped_column(Integer, ForeignKey("knowledge_bases.id", ondelete="CASCADE"), nullable=False, index=True)
+    # V1.1.1：kb_id 允许为空，支持不选知识库的对话
+    kb_id: Mapped[Optional[int]] = mapped_column(Integer, ForeignKey("knowledge_bases.id", ondelete="CASCADE"), nullable=True, index=True)
     title: Mapped[str] = mapped_column(String(256), default="新对话", nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
@@ -110,3 +112,20 @@ class Message(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
     conversation: Mapped["Conversation"] = relationship("Conversation", back_populates="messages")
+
+
+class ReportRecord(Base):
+    """报告记录（V1.1）— 报告总结功能手动保存的已生成报告。"""
+
+    __tablename__ = "report_records"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    title: Mapped[str] = mapped_column(String(256), default="报告总结", nullable=False)
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    # 编制时的知识库；不选知识库时为 NULL
+    kb_id: Mapped[Optional[int]] = mapped_column(
+        Integer, ForeignKey("knowledge_bases.id", ondelete="SET NULL"),
+        nullable=True, index=True,
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)

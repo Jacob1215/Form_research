@@ -3,6 +3,7 @@ import type { ReactNode } from 'react'
 import Header from './components/Header'
 import Sidebar from './components/Sidebar'
 import Chat from './pages/Chat'
+import Report from './pages/Report'
 import LlmConfig from './pages/LlmConfig'
 import KbManagement from './pages/KbManagement'
 import KbDocuments from './pages/KbDocuments'
@@ -30,6 +31,7 @@ export default function App() {
     <BrowserRouter>
       <Routes>
         <Route path="/" element={<Chat />} />
+        <Route path="/report" element={<Report />} />
         <Route
           path="/admin/llm"
           element={

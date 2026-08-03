@@ -220,8 +220,8 @@ export interface MessageListResponse {
   items: Message[]
 }
 
-export const fetchConversations = (kbId: string): Promise<ConversationListResponse> =>
-  apiGet<ConversationListResponse>(`/api/conversations?kb_id=${kbId}`)
+export const fetchConversations = (kbId: string | null): Promise<ConversationListResponse> =>
+  apiGet<ConversationListResponse>(`/api/conversations?kb_id=${kbId ?? ''}`)
 
 export const fetchConversationMessages = (convId: string): Promise<MessageListResponse> =>
   apiGet<MessageListResponse>(`/api/conversations/${convId}/messages`)
@@ -235,7 +235,8 @@ export const fetchStatus = (): Promise<StatusInfo> =>
 /* ------------------------------- SSE streaming ----------------------------- */
 
 export interface StreamChatParams {
-  kb_id: string
+  // V1.1.1：kb_id 可为 null（不选知识库）
+  kb_id: string | null
   message: string
   conversation_id?: string
   onToken: (content: string) => void
@@ -249,13 +250,20 @@ export interface StreamHandle {
   abort: () => void
 }
 
-export function streamChat(params: StreamChatParams): StreamHandle {
+// V1.1.2：共享的 SSE 流式请求核心 — POST JSON 到 path，解析 data: 事件并分发回调。
+// 对话与报告总结共用此模块，通过回调区分事件类型（token/references/progress/report 等）。
+interface StreamCallbacks {
+  onToken?: (content: string) => void
+  onReferences?: (refs: ChatReference[]) => void
+  onStart?: (conversationId: string) => void
+  onDone?: () => void
+  onError?: (err: string) => void
+  onProgress?: (message: string) => void
+  onReport?: (content: string) => void
+}
+
+function streamSSE(path: string, body: unknown, cb: StreamCallbacks): StreamHandle {
   const controller = new AbortController()
-  const body = {
-    kb_id: params.kb_id,
-    message: params.message,
-    conversation_id: params.conversation_id,
-  }
 
   const dispatch = (evt: Record<string, unknown>) => {
     const type = evt.type as string
@@ -263,33 +271,45 @@ export function streamChat(params: StreamChatParams): StreamHandle {
       case 'start': {
         const cid = evt.conversation_id
         if (cid !== undefined && cid !== null && cid !== '') {
-          params.onStart?.(String(cid))
+          cb.onStart?.(String(cid))
         }
         break
       }
       case 'references': {
         const refs = (evt.references ?? evt.data) as ChatReference[] | undefined
-        params.onReferences?.(Array.isArray(refs) ? refs : [])
+        cb.onReferences?.(Array.isArray(refs) ? refs : [])
+        break
+      }
+      case 'progress': {
+        // 大文档分块阅读进度 / 生成完整报告进度
+        const msg = evt.message
+        if (typeof msg === 'string') cb.onProgress?.(msg)
+        break
+      }
+      case 'report': {
+        // V1.1.2：完整报告内容（对话框只显示要点，完整报告用于展开查看与 docx 导出）
+        const content = evt.content
+        if (typeof content === 'string') cb.onReport?.(content)
         break
       }
       case 'token': {
         const content = evt.content
-        if (typeof content === 'string') params.onToken(content)
+        if (typeof content === 'string') cb.onToken?.(content)
         break
       }
       case 'delta': {
         // tolerate alternative field name
         const content = evt.content ?? evt.delta
-        if (typeof content === 'string') params.onToken(content)
+        if (typeof content === 'string') cb.onToken?.(content)
         break
       }
       case 'done': {
-        params.onDone?.()
+        cb.onDone?.()
         break
       }
       case 'error': {
         const msg = evt.message ?? evt.error
-        params.onError?.(typeof msg === 'string' ? msg : '生成失败')
+        cb.onError?.(typeof msg === 'string' ? msg : '生成失败')
         break
       }
       default:
@@ -319,7 +339,7 @@ export function streamChat(params: StreamChatParams): StreamHandle {
     return remaining
   }
 
-  fetch('/api/chat', {
+  fetch(path, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
@@ -327,12 +347,12 @@ export function streamChat(params: StreamChatParams): StreamHandle {
   })
     .then(async (res) => {
       if (!res.ok) {
-        params.onError?.(await extractError(res))
+        cb.onError?.(await extractError(res))
         return
       }
       const reader = res.body?.getReader()
       if (!reader) {
-        params.onError?.('无法读取响应流')
+        cb.onError?.('无法读取响应流')
         return
       }
       const decoder = new TextDecoder('utf-8')
@@ -346,17 +366,129 @@ export function streamChat(params: StreamChatParams): StreamHandle {
       // flush any trailing data
       buffer += decoder.decode()
       if (buffer.trim()) processBuffer(buffer)
-      // ensure done fires if the stream ended without an explicit done event
     })
     .catch((err: unknown) => {
       if (err instanceof DOMException && err.name === 'AbortError') return
       if (err instanceof Error && err.name === 'AbortError') return
       const message =
         err instanceof Error ? err.message || '网络错误' : '网络错误'
-      params.onError?.(message)
+      cb.onError?.(message)
     })
 
   return {
     abort: () => controller.abort(),
   }
 }
+
+export function streamChat(params: StreamChatParams): StreamHandle {
+  return streamSSE('/api/chat', {
+    kb_id: params.kb_id ?? null,
+    message: params.message,
+    conversation_id: params.conversation_id,
+  }, params)
+}
+
+/* --------------------------- 报告总结功能（V1.1+） --------------------------- */
+
+export interface ReportDocRef {
+  url: string
+  name?: string
+}
+
+export interface ReportMessage {
+  role: 'user' | 'assistant'
+  content: string
+  images?: string[]
+  documents?: ReportDocRef[]
+}
+
+export interface ReportUploadItem {
+  url: string
+  name: string
+  size: number
+  kind?: 'image' | 'doc'
+}
+
+export interface ReportUploadResponse {
+  items: ReportUploadItem[]
+}
+
+export interface StreamReportParams {
+  kb_id: string | null
+  title?: string
+  messages: ReportMessage[]
+  skills?: string[]
+  onToken: (content: string) => void
+  onDone?: () => void
+  onError?: (err: string) => void
+  onProgress?: (message: string) => void
+  onReport?: (content: string) => void
+}
+
+export function streamReportChat(params: StreamReportParams): StreamHandle {
+  return streamSSE('/api/report/chat', {
+    kb_id: params.kb_id ?? null,
+    title: params.title,
+    messages: params.messages,
+    skills: params.skills,
+  }, params)
+}
+
+// V1.1.3：报告 skill 库 — 技能清单与选择
+export interface ReportSkillItem {
+  name: string
+  description?: string
+}
+
+export interface ReportSkillsResponse {
+  items: ReportSkillItem[]
+}
+
+export const fetchReportSkills = (): Promise<ReportSkillsResponse> =>
+  apiGet<ReportSkillsResponse>('/api/report/skills')
+
+export async function uploadReportFiles(files: File[]): Promise<ReportUploadResponse> {
+  const fd = new FormData()
+  files.forEach((f) => fd.append('files', f))
+  return (await request('/api/report/upload', { method: 'POST', body: fd })) as ReportUploadResponse
+}
+
+export async function exportReportDocx(title: string, content: string): Promise<Blob> {
+  const res = await fetch('/api/report/export', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ title, content }),
+  })
+  if (!res.ok) throw new Error(await extractError(res))
+  return res.blob()
+}
+
+/* ------------------------- 报告记录（V1.1：手动保存） ------------------------- */
+
+export interface ReportRecordItem {
+  id: string
+  title: string
+  kb_id?: string | null
+  created_at?: string
+  updated_at?: string
+}
+
+export interface ReportRecordDetailItem extends ReportRecordItem {
+  content: string
+}
+
+export interface ReportRecordListResponse {
+  items: ReportRecordItem[]
+}
+
+export const saveReportRecord = (title: string, content: string): Promise<ReportRecordDetailItem> =>
+  apiPost<ReportRecordDetailItem>('/api/report/records', { title, content })
+
+export const fetchReportRecords = (): Promise<ReportRecordListResponse> =>
+  apiGet<ReportRecordListResponse>('/api/report/records')
+
+export const fetchReportRecord = (id: string): Promise<ReportRecordDetailItem> =>
+  apiGet<ReportRecordDetailItem>(`/api/report/records/${id}`)
+
+export const deleteReportRecord = (id: string): Promise<{ ok: boolean }> =>
+  apiDelete<{ ok: boolean }>(`/api/report/records/${id}`)

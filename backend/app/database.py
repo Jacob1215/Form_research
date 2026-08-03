@@ -94,6 +94,14 @@ def _auto_migrate(engine) -> None:
                 ))
                 logger.info("已添加列: documents.%s", col)
 
+        # V1.1.1：conversations.kb_id 改为允许为空（支持不选知识库对话）。
+        # 对已存在库生效；新库由 create_all 直接建为可空。DROP NOT NULL 幂等。
+        try:
+            conn.execute(text("ALTER TABLE conversations ALTER COLUMN kb_id DROP NOT NULL"))
+            logger.info("已迁移: conversations.kb_id 允许为空")
+        except Exception as e:  # noqa: BLE001
+            logger.warning("conversations.kb_id 迁移跳过: %s", e)
+
         # 检查并创建 document_chunks 表
         table_exists = conn.execute(text(
             "SELECT 1 FROM information_schema.tables "

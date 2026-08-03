@@ -43,9 +43,31 @@ class Settings(BaseSettings):
     # CORS 允许来源
     CORS_ORIGINS: str = "*"
 
-    # 文档上传限制
-    MAX_UPLOAD_FILES: int = 20
-    MAX_UPLOAD_SIZE_MB: int = 50
+    # 文档上传限制（V1.1：支持更大文档/更多图片）
+    MAX_UPLOAD_FILES: int = 50
+    MAX_UPLOAD_SIZE_MB: int = 100
+
+    # ---------- 报告总结功能配置（V1.1+） ----------
+
+    # 单次上传图片/文档数量与单文件大小限制
+    REPORT_MAX_IMAGES: int = 20
+    REPORT_MAX_IMAGE_SIZE_MB: int = 20
+
+    # 上传文档注入 LLM 上下文的字符上限
+    # （调小可防止超出模型上下文导致空响应；调大可纳入更长文档，需模型上下文足够大）
+    REPORT_DOC_TEXT_CAP: int = 80000
+
+    # 大文档分块读取（文档超过 REPORT_DOC_TEXT_CAP 时启用 map-reduce）
+    REPORT_CHUNK_SIZE: int = 8000        # 每块字符数
+    REPORT_MAX_CHUNKS: int = 80          # 单文档最大块数（溢出时保留首尾块，确保靠后章节覆盖）
+    REPORT_CHUNK_SUMMARY_CAP: int = 30000  # 合并后要点汇总上限（超限时首尾保留，不丢末尾章节）
+
+    # V1.1.3：报告 skill 库 — 注入 system prompt 的指令块总长上限
+    REPORT_SKILLS_MAX_CHARS: int = 24000
+
+    # 报告生成输出 token 上限：取 max(REPORT_MAX_TOKENS, LLM 配置 max_tokens)
+    # 防止完整报告/要点输出被后台 max_tokens 限制
+    REPORT_MAX_TOKENS: int = 4096
 
 
 settings = Settings()

@@ -193,7 +193,8 @@ class MessageOut(BaseModel):
 # ---------- 对话请求 ----------
 
 class ChatRequest(BaseModel):
-    kb_id: int
+    # V1.1.1：kb_id 允许为空（不选知识库对话）
+    kb_id: Optional[int] = None
     message: str = Field(..., min_length=1)
     conversation_id: Optional[int] = None
 
@@ -203,3 +204,62 @@ class ChatRequest(BaseModel):
 class StatusResponse(BaseModel):
     llm_configured: bool
     active_model: Optional[str] = None
+
+
+# ---------- 报告总结（V1.1+） ----------
+
+class ReportDocRef(BaseModel):
+    """上传的参考文档引用。"""
+    url: str
+    name: str = ""
+
+
+class ReportMessage(BaseModel):
+    """报告对话中的一条消息。user 消息可附带上传图片/文档引用。"""
+    role: str = "user"  # user / assistant
+    content: str = ""
+    images: Optional[list[str]] = None
+    documents: Optional[list[ReportDocRef]] = None
+
+
+class ReportChatRequest(BaseModel):
+    # V1.1.1：kb_id 允许为空（不选知识库，纯资料编制）
+    kb_id: Optional[int] = None
+    title: Optional[str] = None
+    # V1.1.3：本次生成选用的 skill 名称列表（未选则为空/None，不注入技能指令）
+    skills: Optional[list[str]] = None
+    messages: list[ReportMessage] = Field(..., min_length=1)
+
+
+class ReportExportRequest(BaseModel):
+    title: Optional[str] = None
+    content: str = Field(..., min_length=1)
+
+
+# ---------- 报告记录（V1.1：手动保存） ----------
+
+class ReportRecordCreate(BaseModel):
+    title: Optional[str] = None
+    content: str = Field(..., min_length=1)
+
+
+class ReportRecordOut(BaseModel):
+    id: int
+    title: str
+    kb_id: Optional[int] = None
+    created_at: str | None = None
+    updated_at: str | None = None
+
+    @classmethod
+    def from_orm(cls, obj):
+        return cls(
+            id=obj.id,
+            title=obj.title,
+            kb_id=obj.kb_id,
+            created_at=_to_iso(obj.created_at),
+            updated_at=_to_iso(obj.updated_at),
+        )
+
+
+class ReportRecordDetail(ReportRecordOut):
+    content: str

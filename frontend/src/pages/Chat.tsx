@@ -91,7 +91,7 @@ export default function Chat() {
   }, [])
 
   /* ----- load conversations when KB changes ----- */
-  const loadConversations = useCallback(async (kbId: string) => {
+  const loadConversations = useCallback(async (kbId: string | null) => {
     setConvLoading(true)
     try {
       const res = await fetchConversations(kbId)
@@ -105,11 +105,8 @@ export default function Chat() {
   }, [])
 
   useEffect(() => {
-    if (selectedKb) {
-      loadConversations(selectedKb.id)
-    } else {
-      setConversations([])
-    }
+    // V1.1.1：kb 为空表示不选知识库，加载无知识库会话
+    loadConversations(selectedKb?.id ?? null)
   }, [selectedKb, loadConversations])
 
   /* ----- close dropdown on outside click ----- */
@@ -159,7 +156,7 @@ export default function Chat() {
     }
   }, [])
 
-  const selectKb = (kb: KnowledgeBase) => {
+  const selectKb = (kb: KnowledgeBase | null) => {
     setSelectedKb(kb)
     setDropdownOpen(false)
     if (streamRef.current) {
@@ -195,9 +192,8 @@ export default function Chat() {
   }
 
   const refreshConversations = useCallback(async () => {
-    if (!selectedKb) return
     try {
-      const res = await fetchConversations(selectedKb.id)
+      const res = await fetchConversations(selectedKb?.id ?? null)
       setConversations(res.items || [])
     } catch (err) {
       console.error(err)
@@ -208,7 +204,7 @@ export default function Chat() {
   const sendMessage = useCallback(
     (text: string) => {
       const trimmed = text.trim()
-      if (!trimmed || !selectedKb || streaming) return
+      if (!trimmed || streaming) return
 
       const userMsg: ChatMessage = {
         id: nextId(),
@@ -230,7 +226,7 @@ export default function Chat() {
       let firstToken = true
 
       streamRef.current = streamChat({
-        kb_id: selectedKb.id,
+        kb_id: selectedKb?.id ?? null,
         message: trimmed,
         conversation_id: conversationIdRef.current,
         onToken: (content) => {
@@ -287,7 +283,7 @@ export default function Chat() {
   }
 
   const handleRegenerate = (aiMsg: ChatMessage) => {
-    if (streaming || !selectedKb) return
+    if (streaming) return
     const idx = messages.findIndex((m) => m.id === aiMsg.id)
     if (idx <= 0) return
     const userMsg = messages[idx - 1]
@@ -305,7 +301,7 @@ export default function Chat() {
     setLiked((prev) => ({ ...prev, [id]: prev[id] === vote ? undefined : vote }))
   }
 
-  const canSend = !!input.trim() && !!selectedKb && !streaming
+  const canSend = !!input.trim() && !streaming
 
   /* ----- helpers for formatting conversation timestamps ----- */
   const formatConvTime = (iso?: string): string => {
@@ -379,8 +375,8 @@ export default function Chat() {
                   </svg>
                 </span>
                 <span className="kb-trigger-label">
-                  <span className="kb-trigger-hint">{selectedKb ? '已选择知识库' : '请选择知识库'}</span>
-                  <span className="kb-name">{selectedKb ? selectedKb.name : kbLoading ? '加载中...' : '暂无知识库'}</span>
+                  <span className="kb-trigger-hint">{selectedKb ? '已选择知识库' : '未选择知识库'}</span>
+                  <span className="kb-name">{selectedKb ? selectedKb.name : kbLoading ? '加载中...' : '不选择知识库'}</span>
                 </span>
                 <span className="kb-chevron">
                   <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -391,6 +387,29 @@ export default function Chat() {
               {dropdownOpen && (
                 <div className="kb-dropdown open" role="listbox" aria-label="请选择知识库">
                   <div className="kb-dropdown-header">请选择知识库</div>
+                  <div
+                    className={`kb-option${selectedKb === null ? ' selected' : ''}`}
+                    role="option"
+                    aria-selected={selectedKb === null}
+                    onClick={() => selectKb(null)}
+                  >
+                    <span className="kb-option-icon">
+                      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M9 9H5a2 2 0 0 0-2 2v4a2 2 0 0 0 2 2h1l3 3V9Zm6 0h4a2 2 0 0 1 2 2v4a2 2 0 0 1-2 2h-1l-3 3V9Z" />
+                      </svg>
+                    </span>
+                    <span className="kb-option-body">
+                      <span className="kb-option-name">不选择知识库</span>
+                      <span className="kb-option-desc">直接与大模型对话，不使用知识库检索</span>
+                    </span>
+                    {selectedKb === null && (
+                      <span className="kb-check">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                          <path d="M20 6 9 17l-5-5" />
+                        </svg>
+                      </span>
+                    )}
+                  </div>
                   {kbs.length === 0 && (
                     <div className="kb-option" style={{ cursor: 'default' }}>
                       <span className="kb-option-body">
@@ -449,8 +468,10 @@ export default function Chat() {
                   </div>
                   <div className="welcome-text">
                     {selectedKb
-                      ? `你好！我是${APP_NAME} ${APP_VERSION}，请选择知识库后向我提问。`
-                      : '你好！当前暂无可用知识库，请前往后台创建后再提问。'}
+                      ? `你好！我是${APP_NAME} ${APP_VERSION}，已选择知识库「${selectedKb.name}」，请开始提问。`
+                      : kbs.length > 0
+                        ? '你好！当前未选择知识库，将直接回答；也可从上方选择知识库进行规范问答。'
+                        : '你好！当前暂无知识库，可直接提问，或前往后台创建知识库后再进行规范问答。'}
                   </div>
                 </div>
               )}
@@ -564,11 +585,10 @@ export default function Chat() {
             </button>
             <textarea
               className="chat-textarea"
-              placeholder={selectedKb ? '请输入您的问题，Shift+Enter换行...' : '请先选择知识库后提问'}
+              placeholder="请输入您的问题，Shift+Enter换行..."
               rows={1}
               ref={textareaRef}
               value={input}
-              disabled={!selectedKb}
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={handleKeyDown}
             />

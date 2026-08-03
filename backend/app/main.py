@@ -10,7 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from .config import settings
 from .database import init_db
 from .version import APP_NAME, APP_VERSION
-from .routers import chat, admin_llm, admin_kb, admin_docs
+from .routers import chat, admin_llm, admin_kb, admin_docs, report
 
 logging.basicConfig(
     level=logging.INFO,
@@ -49,6 +49,7 @@ app.include_router(chat.router)
 app.include_router(admin_llm.router)
 app.include_router(admin_kb.router)
 app.include_router(admin_docs.router)
+app.include_router(report.router)
 
 
 # ---------- 上传文件静态资源托管（供 Markdown 预览中的图片访问） ----------

@@ -23,6 +23,12 @@ logger = logging.getLogger("app.chat")
 
 router = APIRouter(prefix="/api", tags=["chat"])
 
+# V1.1.1：不选知识库时使用的通用提示词（不复用 RAG 专用 SYSTEM_PROMPT）
+GENERIC_SYSTEM_PROMPT = (
+    "你是一名智能问答助手。请直接、准确、简洁地回答用户问题；"
+    "当用户提供资料时，优先基于资料内容回答。"
+)
+
 
 def _get_active_llm(db: Session) -> Optional[LLMConfig]:
     return db.execute(
@@ -78,14 +84,15 @@ def _build_image_fallback_section(results: list[dict], assistant_text: str) -> s
     return "\n\n### 相关图片\n\n" + "\n".join(picked)
 
 
-def _stream_chat(request: Request, kb_id: int, message: str, conversation_id: Optional[int]):
+def _stream_chat(request: Request, kb_id: Optional[int], message: str, conversation_id: Optional[int]):
     """生成 SSE 流。使用独立的 DB 会话，避免与请求作用域冲突。"""
     db = SessionLocal()
     assistant_content_parts: list[str] = []
     references_payload: list[dict] = []
     try:
-        kb = db.get(KnowledgeBase, kb_id)
-        if kb is None:
+        # V1.1.1：kb_id 为空表示不选知识库（纯问答，不检索）
+        kb = db.get(KnowledgeBase, kb_id) if kb_id is not None else None
+        if kb_id is not None and kb is None:
             yield _sse({"type": "error", "message": "知识库不存在"})
             return
 
@@ -117,34 +124,37 @@ def _stream_chat(request: Request, kb_id: int, message: str, conversation_id: Op
             return
 
         # === RAG 检索（向量语义检索，retrieve_with_hybrid 内部异常时降级 BM25） ===
-        rewritten_query = message
-        try:
-            # 查询改写（可选，用 LLM 将口语化查询扩展为专业术语）
-            if settings.ENABLE_QUERY_REWRITE:
-                from ..hybrid_search import query_rewrite
-                try:
-                    rewritten = query_rewrite(
-                        message, llm.api_url, api_key, llm.model_name
-                    )
-                    if rewritten and rewritten != message:
-                        rewritten_query = f"{message} {rewritten}"
-                        logger.info("查询改写: %r → %r", message, rewritten_query[:80])
-                except Exception as e:
-                    logger.debug("查询改写跳过: %s", e)
+        # V1.1.1：不选知识库（kb_id 为空）时跳过检索，仅凭大模型回答
+        results: list = []
+        if kb_id is not None:
+            rewritten_query = message
+            try:
+                # 查询改写（可选，用 LLM 将口语化查询扩展为专业术语）
+                if settings.ENABLE_QUERY_REWRITE:
+                    from ..hybrid_search import query_rewrite
+                    try:
+                        rewritten = query_rewrite(
+                            message, llm.api_url, api_key, llm.model_name
+                        )
+                        if rewritten and rewritten != message:
+                            rewritten_query = f"{message} {rewritten}"
+                            logger.info("查询改写: %r → %r", message, rewritten_query[:80])
+                    except Exception as e:
+                        logger.debug("查询改写跳过: %s", e)
 
-            # 向量检索（V1.0.7 方案 A：纯向量；检索不可用时内部降级 BM25）
-            results = retrieve_with_hybrid(
-                db, kb_id, message,
-                top_k=5, rewritten_query=rewritten_query,
-            )
-        except Exception as e:  # noqa: BLE001
-            # 检索异常：直接报错让用户感知问题
-            logger.warning("向量检索失败: %s", e)
-            yield _sse({
-                "type": "error",
-                "message": f"检索失败：{e}",
-            })
-            return
+                # 向量检索（V1.0.7 方案 A：纯向量；检索不可用时内部降级 BM25）
+                results = retrieve_with_hybrid(
+                    db, kb_id, message,
+                    top_k=5, rewritten_query=rewritten_query,
+                )
+            except Exception as e:  # noqa: BLE001
+                # 检索异常：直接报错让用户感知问题
+                logger.warning("向量检索失败: %s", e)
+                yield _sse({
+                    "type": "error",
+                    "message": f"检索失败：{e}",
+                })
+                return
 
         # 构建引用信息
         references_payload = [
@@ -159,8 +169,14 @@ def _stream_chat(request: Request, kb_id: int, message: str, conversation_id: Op
         if references_payload:
             yield _sse({"type": "references", "references": references_payload})
 
-        # 构造 prompt 并流式调用 LLM
-        messages = build_prompt(message, results)
+        # 构造 prompt 并流式调用 LLM：有知识库走 RAG 提示词；无知识库走通用提示词
+        if kb_id is not None:
+            messages = build_prompt(message, results)
+        else:
+            messages = [
+                {"role": "system", "content": GENERIC_SYSTEM_PROMPT},
+                {"role": "user", "content": message},
+            ]
 
         class _Cfg:
             pass
@@ -223,12 +239,15 @@ def chat(req: ChatRequest, request: Request):
 
 
 @router.get("/conversations")
-def list_conversations(kb_id: int, db: Session = Depends(get_db)):
-    rows = db.execute(
-        select(Conversation)
-        .where(Conversation.kb_id == kb_id)
-        .order_by(Conversation.updated_at.desc())
-    ).scalars().all()
+def list_conversations(kb_id: Optional[int] = None, db: Session = Depends(get_db)):
+    """会话列表。kb_id 为空时返回「不选知识库」的会话。"""
+    stmt = select(Conversation)
+    if kb_id is None:
+        stmt = stmt.where(Conversation.kb_id.is_(None))
+    else:
+        stmt = stmt.where(Conversation.kb_id == kb_id)
+    stmt = stmt.order_by(Conversation.updated_at.desc())
+    rows = db.execute(stmt).scalars().all()
     return {"items": [ConversationOut.from_orm(r).model_dump() for r in rows]}
 
 

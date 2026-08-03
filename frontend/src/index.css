@@ -1638,3 +1638,287 @@ table.config-table {
   background: var(--state-error-soft);
   color: var(--state-error);
 }
+
+/* ============================================
+   REPORT PAGE — 报告总结功能
+   ============================================ */
+.report-title-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 9px 14px;
+  border: 1px solid var(--qa-border);
+  border-radius: var(--qa-radius-medium);
+  background: var(--qa-card);
+  color: var(--qa-foreground);
+  font-size: 14px;
+  outline: none;
+  transition: border-color .15s ease, box-shadow .15s ease;
+}
+.report-title-input::placeholder { color: var(--qa-muted-foreground); }
+.report-title-input:focus {
+  border-color: var(--qa-primary-400);
+  box-shadow: 0 0 0 3px var(--qa-primary-50);
+}
+
+.report-download-btn {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 9px 16px;
+  border-radius: var(--qa-radius-medium);
+  border: 1px solid var(--qa-primary);
+  background: var(--qa-primary);
+  color: var(--qa-primary-foreground);
+  cursor: pointer; font-size: 14px; font-weight: 600;
+  white-space: nowrap;
+  transition: all .15s ease;
+}
+.report-download-btn:hover:not(:disabled) { background: var(--qa-primary-700); border-color: var(--qa-primary-700); }
+.report-download-btn:disabled { opacity: .45; cursor: not-allowed; }
+
+.report-new-btn {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 9px 14px;
+  border-radius: var(--qa-radius-medium);
+  border: 1px solid var(--qa-border);
+  background: var(--qa-card);
+  color: var(--qa-foreground);
+  cursor: pointer; font-size: 14px; font-weight: 600;
+  white-space: nowrap;
+  transition: all .15s ease;
+}
+.report-new-btn:hover:not(:disabled) { background: var(--qa-muted); border-color: var(--qa-primary-300); }
+.report-new-btn:disabled { opacity: .45; cursor: not-allowed; }
+
+/* 用户消息内的图片 */
+.report-msg-images {
+  display: flex; flex-wrap: wrap; gap: 8px;
+  margin-top: 8px;
+}
+.report-msg-images img {
+  max-width: 140px; max-height: 140px;
+  border-radius: var(--qa-radius-medium);
+  border: 1px solid var(--qa-border);
+  object-fit: cover;
+  display: block;
+}
+
+/* 输入区附件缩略图 */
+.report-attach-list {
+  display: flex; flex-wrap: wrap; gap: 8px;
+}
+.report-attach-item {
+  position: relative;
+  width: 72px; height: 72px;
+}
+.report-attach-thumb {
+  width: 72px; height: 72px;
+  border-radius: var(--qa-radius-medium);
+  border: 1px solid var(--qa-border);
+  object-fit: cover;
+  display: block;
+  background: var(--qa-muted);
+}
+.report-attach-thumb.report-attach-loading {
+  display: flex; align-items: center; justify-content: center;
+  font-size: 12px; color: var(--qa-muted-foreground);
+}
+.report-attach-remove {
+  position: absolute; top: -6px; right: -6px;
+  width: 18px; height: 18px;
+  border-radius: 50%;
+  border: 1px solid var(--qa-border);
+  background: var(--qa-card);
+  color: var(--qa-foreground);
+  font-size: 13px; line-height: 1;
+  cursor: pointer;
+  display: inline-flex; align-items: center; justify-content: center;
+  padding: 0;
+}
+.report-attach-remove:hover { background: var(--state-error-soft); color: var(--state-error); }
+
+/* ============================================
+   REPORT PAGE V1.1.1 — 记录侧栏/文档上传/详情
+   ============================================ */
+.report-save-btn {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 9px 14px;
+  border-radius: var(--qa-radius-medium);
+  border: 1px solid var(--qa-primary);
+  background: var(--qa-card);
+  color: var(--qa-primary);
+  cursor: pointer; font-size: 14px; font-weight: 600;
+  white-space: nowrap;
+  transition: all .15s ease;
+}
+.report-save-btn:hover:not(:disabled) { background: var(--qa-primary-50); }
+.report-save-btn:disabled { opacity: .45; cursor: not-allowed; }
+
+.report-delete-btn {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 9px 14px;
+  border-radius: var(--qa-radius-medium);
+  border: 1px solid var(--qa-border);
+  background: var(--qa-card);
+  color: var(--state-error);
+  cursor: pointer; font-size: 14px; font-weight: 600;
+  white-space: nowrap;
+  transition: all .15s ease;
+}
+.report-delete-btn:hover { background: var(--state-error-soft); border-color: var(--state-error); }
+
+.report-record-head {
+  display: inline-flex; align-items: center; gap: 8px;
+  color: var(--qa-foreground);
+  min-width: 0;
+}
+.report-record-head svg { color: var(--qa-primary); flex: 0 0 auto; }
+.report-record-head-title {
+  font-size: 14px; font-weight: 700;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  max-width: 50vw;
+}
+
+.report-record-card {
+  background: var(--qa-card);
+  border: 1px solid var(--qa-border);
+  border-radius: var(--qa-radius-large);
+  padding: 24px 28px;
+  max-width: 860px;
+  margin: 24px auto;
+  font-size: 14px; line-height: 1.8;
+}
+.report-record-card h1 {
+  font-size: 20px; font-weight: 700; text-align: center;
+  margin: 0 0 20px; color: var(--qa-foreground);
+}
+
+/* 用户消息中的文档 chip */
+.report-msg-docs {
+  display: flex; flex-wrap: wrap; gap: 8px;
+  margin-top: 8px;
+}
+.report-doc-chip {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 5px 12px;
+  border: 1px solid var(--qa-border);
+  border-radius: var(--radius-md);
+  background: var(--qa-muted);
+  font-size: 13px; color: var(--qa-foreground);
+  max-width: 220px;
+}
+.report-doc-chip svg { color: var(--qa-primary); flex: 0 0 auto; }
+.report-doc-chip span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* 附件区文档 chip（占满 72x72 附件格） */
+.report-attach-doc {
+  width: 72px; height: 72px;
+  border: 1px solid var(--qa-border);
+  border-radius: var(--qa-radius-medium);
+  background: var(--qa-muted);
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 4px; padding: 6px; box-sizing: border-box;
+  color: var(--qa-primary);
+}
+.report-attach-doc span {
+  font-size: 11px; color: var(--qa-foreground);
+  max-width: 100%;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+
+/* ============================================
+   REPORT PAGE V1.1.2 — 要点对话框 + 完整报告折叠
+   ============================================ */
+.report-progress-hint {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px dashed var(--qa-border);
+  font-size: 13px;
+  color: var(--qa-muted-foreground);
+}
+
+.report-full-toggle {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--qa-border);
+}
+.report-full-btn {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 5px 12px;
+  border: 1px solid var(--qa-border);
+  border-radius: var(--qa-radius-medium);
+  background: var(--qa-muted);
+  color: var(--qa-primary);
+  cursor: pointer; font-size: 13px; font-weight: 600;
+  transition: all .15s ease;
+}
+.report-full-btn:hover { background: var(--qa-primary-50); border-color: var(--qa-primary-300); }
+.report-full-content {
+  margin-top: 10px;
+  padding: 12px 14px;
+  background: var(--qa-neutral-50);
+  border: 1px solid var(--qa-border);
+  border-radius: var(--qa-radius-medium);
+  max-height: 60vh;
+  overflow-y: auto;
+  font-size: 14px; line-height: 1.8;
+}
+
+/* ============================================
+   REPORT PAGE V1.1.3 — skill 界面选择
+   ============================================ */
+.input-wrapper { position: relative; }
+
+.report-skill-chips {
+  display: flex; flex-wrap: wrap; gap: 8px;
+}
+.report-skill-chip {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 4px 8px 4px 10px;
+  border: 1px solid var(--qa-primary-300);
+  border-radius: var(--radius-full);
+  background: var(--qa-primary-50);
+  color: var(--qa-primary);
+  font-size: 13px; font-weight: 600;
+}
+.report-skill-chip svg { flex: 0 0 auto; }
+.report-skill-remove {
+  width: 16px; height: 16px;
+  border: none; background: transparent;
+  color: var(--qa-primary);
+  font-size: 14px; line-height: 1;
+  cursor: pointer;
+  display: inline-flex; align-items: center; justify-content: center;
+  padding: 0;
+}
+.report-skill-remove:hover { color: var(--qa-primary-700); }
+
+.skill-trigger-btn { color: var(--qa-primary); }
+
+.skill-menu {
+  position: absolute;
+  bottom: calc(100% + 10px);
+  left: 0; right: 0;
+  background: var(--qa-card);
+  border: 1px solid var(--qa-border);
+  border-radius: var(--qa-radius-medium);
+  box-shadow: 0 8px 28px rgba(15, 23, 42, .14);
+  max-height: 260px;
+  overflow-y: auto;
+  z-index: 40;
+}
+.skill-menu-item {
+  display: flex; flex-direction: column; gap: 2px;
+  padding: 9px 14px;
+  cursor: pointer;
+  border-bottom: 1px solid var(--qa-neutral-100);
+}
+.skill-menu-item:last-child { border-bottom: none; }
+.skill-menu-item.is-active { background: var(--qa-primary-50); }
+.skill-menu-name { font-size: 14px; font-weight: 600; color: var(--qa-foreground); }
+.skill-menu-desc {
+  font-size: 12px; color: var(--qa-muted-foreground);
+  line-height: 1.4;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}

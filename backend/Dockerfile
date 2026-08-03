@@ -30,12 +30,18 @@ WORKDIR /app
 
 # 安装 Python 依赖：清华 PyPI 主源 + 清华 PyTorch CPU 源（国内加速）
 # torch 走 CPU 版可避免拉取 CUDA 包，镜像体积从 ~2.5GB 降到 ~1.5GB
+# 稳定依赖在 requirements.txt（层缓存），新装/更新版本走 requirements-new.txt：
+# 两条 COPY+RUN 必须分开，才能让 requirements.txt 的层不受新文件变化影响。
 COPY backend/requirements.txt ./requirements.txt
 ENV PIP_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple \
     PIP_EXTRA_INDEX_URL=https://mirrors.tuna.tsinghua.edu.cn/pytorch/whl/cpu \
     PIP_DEFAULT_TIMEOUT=120 \
     HF_ENDPOINT=https://hf-mirror.com
 RUN pip install --no-cache-dir -r requirements.txt
+
+# 新装 / 更新版本的依赖（requirements-new.txt 变化只重跑此层，大包不重复下载）
+COPY backend/requirements-new.txt ./requirements-new.txt
+RUN pip install --no-cache-dir -r requirements-new.txt
 
 # V1.0.7：构建期预下载本地 embedding 模型，避免首次启动时运行时下载阻塞请求
 RUN python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('BAAI/bge-small-zh-v1.5', device='cpu')" \
