@@ -4,6 +4,7 @@ sqlalchemy==2.0.34
 psycopg2-binary==2.9.9
 pgvector>=0.5.0
 pydantic-settings==2.4.0
+# python-multipart >=0.0.18：修复 multipart 边界解析 bug（0.0.9 版本处理混合文本/二进制文件上传会报 422）
 python-multipart>=0.0.18
 cryptography==43.0.0
 httpx==0.27.2

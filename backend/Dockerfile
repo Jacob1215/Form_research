@@ -28,7 +28,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /app
 
-# 先安装依赖以利用缓存（清华 PyPI 主源 + PyTorch CPU 源）
+# 安装 Python 依赖：清华 PyPI 主源 + 清华 PyTorch CPU 源（国内加速）
 # torch 走 CPU 版可避免拉取 CUDA 包，镜像体积从 ~2.5GB 降到 ~1.5GB
 COPY backend/requirements.txt ./requirements.txt
 ENV PIP_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple \
