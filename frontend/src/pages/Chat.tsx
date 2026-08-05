@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import Header from '../components/Header'
 import MarkdownRenderer from '../components/MarkdownRenderer'
 import CopyButton from '../components/CopyButton'
+import DocumentSelector from '../components/DocumentSelector'
 import { APP_NAME, APP_VERSION } from '../version'
 import {
   fetchKnowledgeBases,
@@ -49,6 +50,8 @@ export default function Chat() {
   const [kbLoading, setKbLoading] = useState(true)
   const [selectedKb, setSelectedKb] = useState<KnowledgeBase | null>(null)
   const [dropdownOpen, setDropdownOpen] = useState(false)
+  // V1.2.5：已选规范（文档）ID，用于限定检索范围；空 = 搜整个知识库
+  const [selectedDocIds, setSelectedDocIds] = useState<number[]>([])
 
   const [status, setStatus] = useState<StatusInfo | null>(null)
 
@@ -160,6 +163,7 @@ export default function Chat() {
   const selectKb = (kb: KnowledgeBase | null) => {
     setSelectedKb(kb)
     setDropdownOpen(false)
+    setSelectedDocIds([]) // V1.2.5：切换知识库时清空已选规范
     if (streamRef.current) {
       streamRef.current.abort()
       streamRef.current = null
@@ -230,6 +234,7 @@ export default function Chat() {
         kb_id: selectedKb?.id ?? null,
         message: trimmed,
         conversation_id: conversationIdRef.current,
+        doc_ids: selectedDocIds.length ? selectedDocIds : null,
         onToken: (content) => {
           if (firstToken) {
             firstToken = false
@@ -356,6 +361,7 @@ export default function Chat() {
         <div className="chat-content">
           {/* KB selector top bar */}
           <div className="chat-topbar">
+            <div className="topbar-left">
             <div className="kb-selector" ref={dropdownRef}>
               <button
                 className={`kb-trigger${dropdownOpen ? ' open' : ''}`}
@@ -443,6 +449,13 @@ export default function Chat() {
                   ))}
                 </div>
               )}
+            </div>
+            {/* V1.2.5：规范（文档）选择 */}
+            <DocumentSelector
+              kbId={selectedKb ? Number(selectedKb.id) : null}
+              value={selectedDocIds}
+              onChange={setSelectedDocIds}
+            />
             </div>
             <div className="topbar-status">
               <span className="status-dot" />

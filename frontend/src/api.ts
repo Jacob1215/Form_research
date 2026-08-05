@@ -231,6 +231,10 @@ export const fetchConversationMessages = (convId: string): Promise<MessageListRe
 export const fetchKnowledgeBases = (): Promise<KbListResponse> =>
   apiGet<KbListResponse>('/api/knowledge-bases')
 
+// V1.2.5：列出某知识库下的文档（规范），供「指定规范」选择
+export const listDocuments = (kbId: string): Promise<DocumentListResponse> =>
+  apiGet<DocumentListResponse>(`/api/admin/knowledge-bases/${kbId}/documents`)
+
 export const fetchStatus = (): Promise<StatusInfo> =>
   apiGet<StatusInfo>('/api/status')
 
@@ -241,6 +245,8 @@ export interface StreamChatParams {
   kb_id: string | null
   message: string
   conversation_id?: string
+  // V1.2.5：限定检索的规范（文档）ID 列表；空/null/缺省 = 搜整个知识库
+  doc_ids?: number[] | null
   onToken: (content: string) => void
   onReferences?: (refs: ChatReference[]) => void
   onDone?: () => void
@@ -394,6 +400,7 @@ export function streamChat(params: StreamChatParams): StreamHandle {
     kb_id: params.kb_id ?? null,
     message: params.message,
     conversation_id: params.conversation_id,
+    doc_ids: params.doc_ids?.length ? params.doc_ids : null,
   }, params)
 }
 
@@ -427,6 +434,8 @@ export interface StreamReportParams {
   title?: string
   messages: ReportMessage[]
   skills?: string[]
+  // V1.2.5：限定检索的规范（文档）ID 列表；空/null/缺省 = 搜整个知识库
+  doc_ids?: number[] | null
   onToken: (content: string) => void
   onDone?: () => void
   onError?: (err: string) => void
@@ -440,6 +449,7 @@ export function streamReportChat(params: StreamReportParams): StreamHandle {
     title: params.title,
     messages: params.messages,
     skills: params.skills,
+    doc_ids: params.doc_ids?.length ? params.doc_ids : null,
   }, params)
 }
 
@@ -511,6 +521,8 @@ export interface StreamPptParams {
   title?: string
   messages: ReportMessage[]
   skills?: string[]
+  // V1.2.5：限定检索的规范（文档）ID 列表；空/null/缺省 = 搜整个知识库
+  doc_ids?: number[] | null
   onToken: (content: string) => void
   onDone?: () => void
   onError?: (err: string) => void
@@ -524,6 +536,7 @@ export function streamPptChat(params: StreamPptParams): StreamHandle {
     title: params.title,
     messages: params.messages,
     skills: params.skills,
+    doc_ids: params.doc_ids?.length ? params.doc_ids : null,
   }, params)
 }
 

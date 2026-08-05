@@ -828,6 +828,8 @@ input[type="range"].form-range::-moz-range-thumb {
 .kb-check { color: var(--qa-primary); display: inline-flex; margin-top: 2px; }
 
 .topbar-status { display: flex; align-items: center; gap: 8px; }
+/* V1.2.5：topbar 左侧分组（KB 选择 + 规范选择紧贴），与右侧状态区保持 space-between */
+.topbar-left { display: flex; align-items: center; gap: 8px; }
 .status-text { font-size: 12px; color: var(--qa-muted-foreground); white-space: nowrap; }
 
 /* ============================================
@@ -1932,4 +1934,63 @@ table.config-table {
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
   overflow: hidden;
+}
+
+/* ============ V1.2.5：规范（文档）选择器 ============ */
+.doc-selector { position: relative; display: inline-flex; flex-direction: column; }
+.doc-trigger {
+  display: inline-flex; align-items: center; gap: 8px;
+  padding: 8px 12px; border-radius: var(--qa-radius-medium);
+  border: 1px solid var(--qa-border); background: var(--qa-card);
+  color: var(--qa-foreground); font-size: 13px; cursor: pointer; transition: all .15s ease;
+}
+.doc-trigger:hover { border-color: var(--qa-primary-300); background: var(--qa-muted); }
+.doc-trigger.has-value { border-color: var(--qa-primary); color: var(--qa-primary); }
+.doc-trigger.open .doc-chevron { transform: rotate(180deg); }
+.doc-chevron { color: var(--qa-muted-foreground); display: inline-flex; transition: transform .2s ease; }
+.doc-dropdown {
+  position: absolute; top: calc(100% + 8px); left: 0; z-index: 30;
+  width: 560px; max-width: 90vw; max-height: 260px; overflow-y: auto;
+  background: var(--qa-popover); border: 1px solid var(--qa-border);
+  border-radius: var(--qa-radius-large);
+  box-shadow: 0 10px 30px rgba(15, 23, 42, .12);
+}
+.doc-dropdown-header {
+  padding: 10px 14px; font-size: 12px; font-weight: 600;
+  color: var(--qa-muted-foreground);
+  border-bottom: 1px solid var(--qa-border);
+  background: var(--qa-muted);
+}
+.doc-option {
+  display: flex; align-items: center; gap: 10px;
+  padding: 10px 14px; cursor: pointer; transition: background .12s ease;
+  border-bottom: 1px solid var(--qa-border);
+}
+.doc-option:last-child { border-bottom: none; }
+.doc-option:hover { background: var(--qa-muted); }
+.doc-option.selected { background: var(--qa-primary-50); }
+.doc-checkbox { flex: 0 0 auto; accent-color: var(--qa-primary); cursor: pointer; }
+.doc-option-name {
+  flex: 1; font-size: 13px; color: var(--qa-foreground);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.doc-dropdown-footer { padding: 8px 14px; border-top: 1px solid var(--qa-border); text-align: right; }
+.doc-dropdown-footer button {
+  font-size: 12px; color: var(--qa-primary); background: none; border: none; cursor: pointer; padding: 2px 4px;
+}
+.doc-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+.doc-chip {
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 3px 6px 3px 10px;
+  border: 1px solid var(--qa-primary-300);
+  border-radius: var(--radius-full);
+  background: var(--qa-primary-50);
+  color: var(--qa-primary);
+  font-size: 12px; font-weight: 600;
+  max-width: 360px;
+}
+.doc-chip-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.doc-chip-remove {
+  width: 16px; height: 16px; border: none; background: transparent;
+  color: var(--qa-primary); font-size: 14px; line-height: 1; cursor: pointer;
 }

@@ -121,21 +121,24 @@ def _find_relevant_section(text: str, keywords: list[str], spec_codes: list[str]
         section += "\n...（内容过长，已截取最相关段落）"
     return section
 
-def retrieve(db: Session, kb_id: int, query: str, top_k: int = 5) -> list[tuple[Document, float]]:
+def retrieve(db: Session, kb_id: int, query: str, top_k: int = 5, doc_ids: list[int] | None = None) -> list[tuple[Document, float]]:
     """纯 BM25 关键词检索（保留作为降级方案）。
 
     返回 (document, score) 列表。当混合检索不可用时作为兜底。
     打分逻辑复用 text_utils.bm25_rank / substring_rank，行为与重构前一致。
+    V1.2.5：doc_ids 非空时仅检索指定文档。
     """
     query_keywords, spec_codes = build_query_terms(query.strip())
     if not query_keywords and not spec_codes:
         return []
 
-    # 获取知识库中所有有内容的文档
+    # 获取知识库中所有有内容的文档（V1.2.5：doc_ids 非空时只取指定文档）
     stmt = select(Document).where(
         Document.kb_id == kb_id,
         Document.content_text.isnot(None),
     )
+    if doc_ids:
+        stmt = stmt.where(Document.id.in_(doc_ids))
     docs = db.execute(stmt).scalars().all()
     if not docs:
         return []
@@ -176,6 +179,7 @@ def retrieve_with_hybrid(
     top_k: int = 5,
     rewritten_query: str | None = None,
     bm25_query: str | None = None,
+    doc_ids: list[int] | None = None,
 ) -> list[dict]:
     """混合检索入口：BM25 + 向量语义检索 + RRF 融合。
 
@@ -208,6 +212,7 @@ def retrieve_with_hybrid(
         results = hybrid_retrieve(
             db, kb_id, search_query, top_k=top_k,
             query_keywords=query_keywords, spec_codes=spec_codes,
+            doc_ids=doc_ids,
         )
         if results:
             logger.info(
@@ -221,7 +226,7 @@ def retrieve_with_hybrid(
         logger.warning("混合检索异常: %s，降级为纯 BM25", e)
 
     # 降级：纯 BM25 文档检索（同样用扩展后的 bm25_text，利于精确表名命中）
-    bm25_results = retrieve(db, kb_id, bm25_text, top_k=top_k)
+    bm25_results = retrieve(db, kb_id, bm25_text, top_k=top_k, doc_ids=doc_ids)
     results = [
         {
             "doc_id": doc.id,

@@ -201,6 +201,8 @@ class ChatRequest(BaseModel):
     kb_id: Optional[int] = None
     message: str = Field(..., min_length=1)
     conversation_id: Optional[int] = None
+    # V1.2.5：限定检索的规范（文档）ID 列表；None/空 = 搜整个知识库
+    doc_ids: Optional[list[int]] = None
 
 
 # ---------- 状态 ----------
@@ -232,6 +234,8 @@ class ReportChatRequest(BaseModel):
     title: Optional[str] = None
     # V1.1.3：本次生成选用的 skill 名称列表（未选则为空/None，不注入技能指令）
     skills: Optional[list[str]] = None
+    # V1.2.5：限定检索的规范（文档）ID 列表；None/空 = 搜整个知识库
+    doc_ids: Optional[list[int]] = None
     messages: list[ReportMessage] = Field(..., min_length=1)
 
 
@@ -277,6 +281,8 @@ class PptChatRequest(BaseModel):
     title: Optional[str] = None
     # 本次生成选用的 PPT skill 名称列表（未选则为空/None，不注入技能指令）
     skills: Optional[list[str]] = None
+    # V1.2.5：限定检索的规范（文档）ID 列表；None/空 = 搜整个知识库
+    doc_ids: Optional[list[int]] = None
     messages: list[ReportMessage] = Field(..., min_length=1)
 
 

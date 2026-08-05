@@ -100,16 +100,18 @@ def _bm25_search_chunks(
     spec_codes: list[str],
     top_k: int = 10,
     raw_query: str | None = None,
+    doc_ids: list[int] | None = None,
 ) -> list[tuple[int, int, int, float, str, str | None, str | None]]:
     """BM25 关键词检索分块。
 
     V1.2.4：候选池经 _merge_bm25_pool 合并 BM25 + 子串 + 整句字面命中，
     使精确表名/章节名/条款号这类字面命中块能可靠进入混合检索的 RRF 融合。
+    V1.2.5：doc_ids 非空时仅检索指定文档。
 
     返回: list[(chunk_id, doc_id, chunk_index, bm25_score, chunk_content, doc_file_name, section_title)]
     打分复用 text_utils.bm25_rank / substring_rank，行为与重构前一致。
     """
-    # 获取知识库中所有分块
+    # 获取知识库中所有分块（V1.2.5：doc_ids 非空时只取指定文档）
     stmt = (
         select(DocumentChunk, Document.file_name)
         .join(Document, DocumentChunk.doc_id == Document.id)
@@ -118,6 +120,8 @@ def _bm25_search_chunks(
             DocumentChunk.content.isnot(None),
         )
     )
+    if doc_ids:
+        stmt = stmt.where(DocumentChunk.doc_id.in_(doc_ids))
     rows = db.execute(stmt).all()
     if not rows:
         return []
@@ -151,16 +155,20 @@ def _bm25_search_docs(
     query_keywords: list[str],
     spec_codes: list[str],
     top_k: int = 10,
+    doc_ids: list[int] | None = None,
 ) -> list[tuple[Document, float]]:
     """BM25 关键词检索文档（降级方案，当没有分块时使用）。
 
     返回: list[(Document, score)]
     打分复用 text_utils.bm25_rank / substring_rank，行为与重构前一致。
+    V1.2.5：doc_ids 非空时仅检索指定文档。
     """
     stmt = select(Document).where(
         Document.kb_id == kb_id,
         Document.content_text.isnot(None),
     )
+    if doc_ids:
+        stmt = stmt.where(Document.id.in_(doc_ids))
     docs = db.execute(stmt).scalars().all()
     if not docs:
         return []
@@ -207,14 +215,17 @@ def _vector_search(
     kb_id: int,
     query: str,
     top_k: int = 10,
+    doc_ids: list[int] | None = None,
 ) -> list[tuple[int, int, str, float, str | None, str | None]]:
     """向量语义检索。
+
+    V1.2.5：doc_ids 非空时仅检索指定文档。
 
     返回: list[(doc_id, chunk_index, content, similarity, file_name, section_title)]
     """
     vs = VectorStore(db)
 
-    if vs.chunk_count(kb_id) == 0:
+    if vs.chunk_count(kb_id, doc_ids=doc_ids) == 0:
         logger.info("知识库 %d 无向量化分块，跳过向量检索", kb_id)
         return []
 
@@ -235,6 +246,7 @@ def _vector_search(
         kb_id, query_embedding,
         top_k=top_k,
         score_threshold=settings.VECTOR_SCORE_THRESHOLD,
+        doc_ids=doc_ids,
     )
 
 
@@ -313,6 +325,7 @@ def hybrid_retrieve(
     top_k: int = 5,
     query_keywords: list[str] | None = None,
     spec_codes: list[str] | None = None,
+    doc_ids: list[int] | None = None,
 ) -> list[dict]:
     """检索主入口（V1.2.3：默认 hybrid，保留 vector_only 兼容）。
 
@@ -335,7 +348,7 @@ def hybrid_retrieve(
     # V1.2.3：向量检索始终使用原始 query（query_keywords/spec_codes 仅供 BM25 路径，
     # 由上游从"原问题+改写词"分词得到，避免改写稀释向量信号）
     vs = VectorStore(db)
-    has_vectors = vs.chunk_count(kb_id) > 0
+    has_vectors = vs.chunk_count(kb_id, doc_ids=doc_ids) > 0
 
     if settings.RETRIEVE_MODE != "hybrid":
         # ---- 纯向量模式（V1.0.7 方案 A）：完全保留原行为 ----
@@ -346,7 +359,7 @@ def hybrid_retrieve(
                 "（纯向量模式：不再降级 BM25）"
             )
 
-        vector_results = _vector_search(db, kb_id, query, top_k=top_k)
+        vector_results = _vector_search(db, kb_id, query, top_k=top_k, doc_ids=doc_ids)
         if not vector_results:
             logger.info("向量检索返回空: query=%r kb_id=%d", query[:50], kb_id)
             return []
@@ -381,7 +394,7 @@ def hybrid_retrieve(
     if not has_vectors:
         # hybrid 但知识库无向量索引：退化为 BM25 分块检索（不抛异常）
         logger.warning("hybrid 模式无向量索引，退化为 BM25 分块检索: kb_id=%d", kb_id)
-        bm25_results = _bm25_search_chunks(db, kb_id, kw, sc, top_k=top_k, raw_query=query)
+        bm25_results = _bm25_search_chunks(db, kb_id, kw, sc, top_k=top_k, raw_query=query, doc_ids=doc_ids)
         return [
             {
                 "doc_id": doc_id,
@@ -396,8 +409,8 @@ def hybrid_retrieve(
             for _chunk_id, doc_id, chunk_index, score, content, file_name, section_title in bm25_results
         ]
 
-    bm25_results = _bm25_search_chunks(db, kb_id, kw, sc, top_k=top_k * 3, raw_query=query)
-    vector_results = _vector_search(db, kb_id, query, top_k=top_k * 3)
+    bm25_results = _bm25_search_chunks(db, kb_id, kw, sc, top_k=top_k * 3, raw_query=query, doc_ids=doc_ids)
+    vector_results = _vector_search(db, kb_id, query, top_k=top_k * 3, doc_ids=doc_ids)
 
     if not bm25_results and not vector_results:
         logger.info("混合检索两侧均空: query=%r kb_id=%d", query[:50], kb_id)

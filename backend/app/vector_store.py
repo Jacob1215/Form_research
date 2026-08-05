@@ -91,15 +91,17 @@ class VectorStore:
     # 查询操作
     # ============================================================
 
-    def chunk_count(self, kb_id: int) -> int:
-        """获取知识库中已向量化的分块总数。"""
+    def chunk_count(self, kb_id: int, doc_ids: list[int] | None = None) -> int:
+        """获取知识库中已向量化的分块总数（V1.2.5：doc_ids 非空时仅统计指定文档）。"""
+        where = "WHERE kb_id = :kb_id AND embedding IS NOT NULL"
+        params: dict = {"kb_id": kb_id}
+        if doc_ids:
+            where += " AND doc_id = ANY(:doc_ids)"
+            params["doc_ids"] = doc_ids
         return (
             self.db.execute(
-                text(
-                    "SELECT COUNT(*) FROM document_chunks "
-                    "WHERE kb_id = :kb_id AND embedding IS NOT NULL"
-                ),
-                {"kb_id": kb_id},
+                text(f"SELECT COUNT(*) FROM document_chunks {where}"),
+                params,
             ).scalar()
             or 0
         )
@@ -110,8 +112,11 @@ class VectorStore:
         query_embedding: list[float],
         top_k: int = 10,
         score_threshold: float = 0.3,
+        doc_ids: list[int] | None = None,
     ) -> list[tuple[int, int, str, float, str | None, str | None]]:
         """余弦相似度搜索。
+
+        V1.2.5：doc_ids 非空时仅检索指定文档（WHERE 加 dc.doc_id = ANY(:doc_ids)）。
 
         返回: list[(doc_id, chunk_index, content, similarity, file_name, section_title)]
         按相似度降序排列。
@@ -125,8 +130,19 @@ class VectorStore:
         dim = len(query_embedding)
         embedding_str = "[" + ",".join(str(v) for v in query_embedding) + "]"
 
+        # V1.2.5：doc_ids 非空时追加文档过滤（= ANY(:doc_ids) 传 Python list → PG array）
+        doc_filter = " AND dc.doc_id = ANY(:doc_ids)" if doc_ids else ""
+        params: dict = {
+            "query_vec": embedding_str,
+            "kb_id": kb_id,
+            "top_k": top_k,
+            "threshold": score_threshold,
+        }
+        if doc_ids:
+            params["doc_ids"] = doc_ids
+
         try:
-            sql = text("""
+            sql = text(f"""
                 SELECT
                     dc.doc_id,
                     dc.chunk_index,
@@ -138,18 +154,13 @@ class VectorStore:
                 JOIN documents d ON d.id = dc.doc_id
                 WHERE dc.kb_id = :kb_id
                   AND dc.embedding IS NOT NULL
-                  AND 1 - (dc.embedding <=> :query_vec) > :threshold
+                  AND 1 - (dc.embedding <=> :query_vec) > :threshold{doc_filter}
                 ORDER BY dc.embedding <=> :query_vec
                 LIMIT :top_k
             """)
             result = self.db.execute(
                 sql,
-                {
-                    "query_vec": embedding_str,
-                    "kb_id": kb_id,
-                    "top_k": top_k,
-                    "threshold": score_threshold,
-                },
+                params,
             )
             rows = result.fetchall()
 

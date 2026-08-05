@@ -84,7 +84,7 @@ def _build_image_fallback_section(results: list[dict], assistant_text: str) -> s
     return "\n\n### 相关图片\n\n" + "\n".join(picked)
 
 
-def _stream_chat(request: Request, kb_id: Optional[int], message: str, conversation_id: Optional[int]):
+def _stream_chat(request: Request, kb_id: Optional[int], message: str, conversation_id: Optional[int], doc_ids: Optional[list[int]] = None):
     """生成 SSE 流。使用独立的 DB 会话，避免与请求作用域冲突。"""
     db = SessionLocal()
     assistant_content_parts: list[str] = []
@@ -164,6 +164,7 @@ def _stream_chat(request: Request, kb_id: Optional[int], message: str, conversat
                 results = retrieve_with_hybrid(
                     db, kb_id, message,
                     top_k=settings.RAG_TOP_K, bm25_query=bm25_query,
+                    doc_ids=doc_ids,
                 )
             except Exception as e:  # noqa: BLE001
                 # 检索异常：直接报错让用户感知问题
@@ -261,7 +262,7 @@ def _stream_chat(request: Request, kb_id: Optional[int], message: str, conversat
 def chat(req: ChatRequest, request: Request):
     headers = {"X-Accel-Buffering": "no", "Cache-Control": "no-cache"}
     return StreamingResponse(
-        _stream_chat(request, req.kb_id, req.message, req.conversation_id),
+        _stream_chat(request, req.kb_id, req.message, req.conversation_id, req.doc_ids),
         media_type="text/event-stream",
         headers=headers,
     )
