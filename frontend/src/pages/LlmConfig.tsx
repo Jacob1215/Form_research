@@ -18,6 +18,7 @@ interface FormState {
   model_name: string
   temperature: number
   max_tokens: number
+  context_window: number
   timeout: number
   is_active: boolean
 }
@@ -43,6 +44,7 @@ const EMPTY_FORM: FormState = {
   model_name: '',
   temperature: 0.7,
   max_tokens: 2048,
+  context_window: 64000,
   timeout: 30,
   is_active: false,
 }
@@ -106,6 +108,7 @@ export default function LlmConfig() {
       model_name: item.model_name || '',
       temperature: typeof item.temperature === 'number' ? item.temperature : 0.7,
       max_tokens: typeof item.max_tokens === 'number' ? item.max_tokens : 2048,
+      context_window: typeof item.context_window === 'number' ? item.context_window : 64000,
       timeout: typeof item.timeout === 'number' ? item.timeout : 30,
       is_active: !!item.is_active,
     })
@@ -174,6 +177,7 @@ export default function LlmConfig() {
         model_name: form.model_name,
         temperature: form.temperature,
         max_tokens: Number(form.max_tokens),
+        context_window: Number(form.context_window),
         timeout: Number(form.timeout),
         is_active: form.is_active,
       }
@@ -376,6 +380,24 @@ export default function LlmConfig() {
               value={form.max_tokens}
               onChange={(e) => setField('max_tokens', parseInt(e.target.value || '0', 10))}
             />
+          </div>
+
+          <div className="form-field">
+            <label className="form-label" htmlFor="cfg-ctx">
+              上下文窗口（tokens）
+            </label>
+            <input
+              className="form-control"
+              id="cfg-ctx"
+              type="number"
+              min="1000"
+              step="1000"
+              value={form.context_window}
+              onChange={(e) => setField('context_window', parseInt(e.target.value || '0', 10))}
+            />
+            <span style={{ fontSize: '12px', color: 'var(--qa-muted-foreground)' }}>
+              对话历史注入的裁剪上限，按模型实际窗口填写（如 DeepSeek 64000）
+            </span>
           </div>
 
           <div className="form-field">

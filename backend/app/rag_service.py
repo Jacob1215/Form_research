@@ -175,17 +175,22 @@ def retrieve_with_hybrid(
     query: str,
     top_k: int = 5,
     rewritten_query: str | None = None,
+    bm25_query: str | None = None,
 ) -> list[dict]:
     """混合检索入口：BM25 + 向量语义检索 + RRF 融合。
 
-    优先使用混合检索（需要分块且已向量化），不可用时自动降级为纯 BM25。
+    V1.2.3：向量检索始终使用原始 query（避免查询改写词稀释精确表名信号）；
+    BM25 关键词路径使用 bm25_query（原问题 + 改写补充词，更利于"分级标准表"
+    这类字面表名命中）。不传 bm25_query 时回退用 rewritten_query / query，
+    兼容 report.py / ppt.py 的旧调用。
 
     Args:
         db: 数据库会话
         kb_id: 知识库 ID
-        query: 用户查询（或已改写的查询）
+        query: 用户查询（向量路径与 RAG 上下文使用）
         top_k: 返回结果数
-        rewritten_query: 改写后的查询文本（可选）
+        rewritten_query: 改写后的查询文本（可选，旧接口，视为 BM25 文本）
+        bm25_query: V1.2.3 BM25 路径检索文本（message + 改写词），优先于 rewritten_query
 
     Returns:
         list[dict]，每个字典包含:
@@ -193,15 +198,21 @@ def retrieve_with_hybrid(
         - bm25_score / vector_score
     """
     from .hybrid_search import hybrid_retrieve
+    from .text_utils import build_query_terms
 
-    search_query = rewritten_query or query
+    search_query = query  # 向量始终用原始 query
+    bm25_text = (bm25_query or rewritten_query or query).strip() or query
+    query_keywords, spec_codes = build_query_terms(bm25_text)
 
     try:
-        results = hybrid_retrieve(db, kb_id, search_query, top_k=top_k)
+        results = hybrid_retrieve(
+            db, kb_id, search_query, top_k=top_k,
+            query_keywords=query_keywords, spec_codes=spec_codes,
+        )
         if results:
             logger.info(
-                "混合检索成功: query=%r kb_id=%d results=%d",
-                query[:50], kb_id, len(results),
+                "混合检索成功: query=%r bm25_text=%r kb_id=%d results=%d",
+                query[:50], bm25_text[:50], kb_id, len(results),
             )
             # V1.0.9：为检索结果附带分块中的图片（alt, url），供 LLM 上下文与对话界面展示
             _attach_images(db, kb_id, results)
@@ -209,8 +220,8 @@ def retrieve_with_hybrid(
     except Exception as e:
         logger.warning("混合检索异常: %s，降级为纯 BM25", e)
 
-    # 降级：纯 BM25 文档检索
-    bm25_results = retrieve(db, kb_id, search_query, top_k=top_k)
+    # 降级：纯 BM25 文档检索（同样用扩展后的 bm25_text，利于精确表名命中）
+    bm25_results = retrieve(db, kb_id, bm25_text, top_k=top_k)
     results = [
         {
             "doc_id": doc.id,
@@ -296,6 +307,10 @@ def _build_structured_context(
             if vector_score > 0:
                 score_info += f"（语义：{vector_score:.2f}，关键词：{bm25_score:.2f}）"
 
+            # V1.2.3：所属章节标题（重索引后回填），便于大模型引用出处
+            section_title = item.get("section_title")
+            title_line = f"所属章节：{section_title}\n" if section_title else ""
+
             # V1.0.9：附带检索结果中的相关图片（最多 3 张），供大模型内嵌展示
             image_marks = [
                 f"![{alt}]({url})"
@@ -310,11 +325,13 @@ def _build_structured_context(
             clean_text = strip_markdown(raw_text)
             section = _find_relevant_section(clean_text, keywords, spec_codes)
             score_info = f"相关度：{score:.2f}"
+            title_line = ""
             images_line = ""
 
         block = (
             f"【检索结果 {i}】\n"
             f"规范名称：《{file_name}》\n"
+            f"{title_line}"
             f"{score_info}\n"
             f"原文内容：{section}"
             f"{images_line}"
@@ -361,3 +378,48 @@ def build_prompt(
         {"role": "system", "content": SYSTEM_PROMPT},
         {"role": "user", "content": user_message},
     ]
+
+
+def build_chat_messages(
+    query: str,
+    results: list[dict],
+    history: list[dict],
+    system_prompt: str = SYSTEM_PROMPT,
+    context_window: int = 0,
+    max_tokens: int = 2048,
+    include_context: bool = True,
+) -> list[dict]:
+    """构造带历史与上下文预算的对话消息列表（V1.2.3）。
+
+    同一会话连续对话：结构 = system + 裁剪后的历史 + 当前 user（含 RAG 上下文）。
+    检索上下文只附到当前轮 user 消息（仿 report._build_llm_messages），历史原样
+    透传（旧检索上下文已隐含在历史 assistant 回答中，避免重复注入旧证据）。
+
+    context_window 未配置（<=0）时不做裁剪，全量历史透传（兼容降级）。
+
+    Args:
+        query: 当前轮用户问题
+        results: 当前轮检索结果（dict 格式）
+        history: 历史消息（旧→新），每项 {"role", "content"}
+        system_prompt: system 提示词
+        context_window: 模型上下文窗口（tokens）
+        max_tokens: LLM 输出上限
+        include_context: 是否注入检索上下文（无知识库纯问答时为 False）
+    """
+    from .context_budget import trim_history_for_budget
+
+    if include_context:
+        context_block = _build_structured_context(results, query)
+        user_message = _build_user_message(context_block, query)
+    else:
+        user_message = query
+
+    if not context_window or int(context_window) <= 0:
+        return [
+            {"role": "system", "content": system_prompt},
+            *list(history),
+            {"role": "user", "content": user_message},
+        ]
+    return trim_history_for_budget(
+        system_prompt, history, user_message, max_tokens, context_window,
+    )

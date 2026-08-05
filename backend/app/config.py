@@ -29,10 +29,21 @@ class Settings(BaseSettings):
     # RAG 检索配置
     ENABLE_QUERY_REWRITE: bool = True  # LLM 查询改写
     ENABLE_RERANK: bool = False  # Cross-encoder 重排序（需额外模型）
-    # V1.0.7 检索模式：vector_only（方案 A，纯向量）/ hybrid（BM25+向量融合）/ bm25_fallback（纯 BM25）
-    RETRIEVE_MODE: str = "vector_only"
-    HYBRID_BM25_WEIGHT: float = 0.3  # RRF 融合中 BM25 权重（仅 hybrid 模式生效）
-    HYBRID_VECTOR_WEIGHT: float = 0.7  # RRF 融合中向量检索权重（仅 hybrid 模式生效）
+    # V1.2.3 检索模式：hybrid（BM25+向量 RRF 融合，默认）/ vector_only（纯向量）/ bm25_fallback（纯 BM25）
+    # V1.0.7 曾默认 vector_only，导致"分级标准表"这类精确表名查询难命中，故 V1.2.3 切回混合。
+    RETRIEVE_MODE: str = "hybrid"
+    # V1.2.3：均衡 RRF 权重（0.5/0.5）。旧值 0.3/0.7 会让 BM25 最大贡献 0.3/61≈0.0049
+    # 低于向量第 15 名 0.7/76≈0.0092，导致 BM25 字面命中的块永远进不了 top-5（bm25_score 恒为 0）。
+    HYBRID_BM25_WEIGHT: float = 0.5
+    HYBRID_VECTOR_WEIGHT: float = 0.5
+
+    # V1.2.3：BGE 查询指令（仅查询侧加前缀，文档侧不加，无需重索引）
+    # BAAI/bge-small-zh-v1.5 官方要求查询侧加此前缀以提升短查询/同义查询召回；
+    # 空串表示禁用。
+    EMBEDDING_QUERY_PROMPT: str = "为这个句子生成表示以用于检索相关文章："
+    # 命中这些模型名子串才应用查询指令（逗号分隔，大小写不敏感）；
+    # 仅 bge 系需要，远程 text-embedding-3 等模型应排除。
+    EMBEDDING_QUERY_PROMPT_MODELS: str = "bge"
 
     # 上传文件目录
     UPLOAD_DIR: str = "/app/uploads"
@@ -46,6 +57,12 @@ class Settings(BaseSettings):
     # 文档上传限制（V1.1：支持更大文档/更多图片）
     MAX_UPLOAD_FILES: int = 50
     MAX_UPLOAD_SIZE_MB: int = 100
+
+    # V1.2.3：大文档入库文本上限（字符）。公路隧道设计规范等大规范远超 10 万字符，
+    # 硬截断会丢掉靠后章节/表格（表现为"查不到靠后内容"）；按机器内存可调大。
+    DOC_TEXT_CAP: int = 500000
+    # 单文档最大分块数（配合 DOC_TEXT_CAP，避免"块数截断"再次丢尾部；500k 字符约 830 块）
+    CHUNK_MAX_COUNT: int = 1500
 
     # ---------- 报告总结功能配置（V1.1+） ----------
 
@@ -68,6 +85,14 @@ class Settings(BaseSettings):
     # 报告生成输出 token 上限：取 max(REPORT_MAX_TOKENS, LLM 配置 max_tokens)
     # 防止完整报告/要点输出被后台 max_tokens 限制
     REPORT_MAX_TOKENS: int = 4096
+
+    # ---------- PPT 制作功能配置（V1.2.1+） ----------
+
+    # PPT 输出 token 上限：取 max(PPT_MAX_TOKENS, LLM 配置 max_tokens)，防止完整演示文稿被截断
+    PPT_MAX_TOKENS: int = 4096
+
+    # PPT skill 库 — 注入 system prompt 的指令块总长上限
+    PPT_SKILLS_MAX_CHARS: int = 24000
 
 
 settings = Settings()

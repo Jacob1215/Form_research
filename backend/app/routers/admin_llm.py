@@ -45,6 +45,7 @@ def create_config(body: LLMConfigCreate, db: Session = Depends(get_db)):
         model_name=body.model_name,
         temperature=body.temperature if body.temperature is not None else 0.7,
         max_tokens=body.max_tokens if body.max_tokens is not None else 2048,
+        context_window=body.context_window if body.context_window is not None else 64000,
         timeout=body.timeout if body.timeout is not None else 30,
         is_active=bool(body.is_active),
     )
@@ -82,6 +83,8 @@ def update_config(cfg_id: int, body: LLMConfigUpdate, db: Session = Depends(get_
         cfg.temperature = body.temperature
     if body.max_tokens is not None:
         cfg.max_tokens = body.max_tokens
+    if body.context_window is not None:
+        cfg.context_window = body.context_window
     if body.timeout is not None:
         cfg.timeout = body.timeout
     # api_key 为空表示保留原 key

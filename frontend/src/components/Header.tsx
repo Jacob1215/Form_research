@@ -2,7 +2,7 @@ import { Link } from 'react-router-dom'
 import { APP_NAME, APP_VERSION } from '../version'
 
 interface HeaderProps {
-  activeNav: 'chat' | 'report' | 'backend'
+  activeNav: 'chat' | 'report' | 'ppt' | 'backend'
 }
 
 export default function Header({ activeNav }: HeaderProps) {
@@ -74,6 +74,26 @@ export default function Header({ activeNav }: HeaderProps) {
               <polyline points="10 9 9 9 8 9" />
             </svg>
             <span>报告总结</span>
+          </Link>
+          <Link
+            to="/ppt"
+            className={`nav-link${activeNav === 'ppt' ? ' is-active' : ''}`}
+          >
+            <svg
+              width="18"
+              height="18"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
+              <rect width="18" height="13" x="3" y="3" rx="2" ry="2" />
+              <path d="M8 7h8M8 11h5" />
+              <path d="M8 15h3" />
+            </svg>
+            <span>PPT制作</span>
           </Link>
         </nav>
       </div>

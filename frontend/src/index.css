@@ -922,6 +922,7 @@ input[type="range"].form-range::-moz-range-thumb {
 .action-btn.icon-only { padding: 5px; }
 .action-btn.icon-only:hover { color: var(--qa-primary); }
 .action-btn.is-active { color: var(--qa-primary); background: var(--qa-primary-50); border-color: var(--qa-primary-100); }
+.action-btn.is-copied { color: var(--qa-primary); }
 
 .typing-dots { display: inline-flex; gap: 4px; align-items: center; padding: 4px 0; }
 .typing-dots span {
@@ -1790,6 +1791,16 @@ table.config-table {
   font-size: 20px; font-weight: 700; text-align: center;
   margin: 0 0 20px; color: var(--qa-foreground);
 }
+
+/* V1.1.4：记录详情中的提问块 */
+.report-record-question {
+  margin-bottom: 18px; padding: 12px 14px;
+  background: var(--qa-muted); border: 1px solid var(--qa-border);
+  border-radius: var(--qa-radius-medium);
+}
+.report-record-question-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px; }
+.report-record-question-label { font-size: 12px; font-weight: 600; color: var(--qa-muted-foreground); }
+.report-record-question-text { font-size: 14px; line-height: 1.7; color: var(--qa-foreground); white-space: pre-wrap; word-break: break-word; }
 
 /* 用户消息中的文档 chip */
 .report-msg-docs {

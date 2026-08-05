@@ -2,7 +2,7 @@
 
 基于大语言模型的 RAG（检索增强生成）智能问答 Web 应用，专为工程规范文档知识库定向提问而设计。
 
-[![Version](https://img.shields.io/badge/version-V1.0.9-blue.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-V1.2.3-blue.svg)](CHANGELOG.md)
 [![Python](https://img.shields.io/badge/python-3.11+-3776AB.svg?style=flat&logo=python&logoColor=white)](https://www.python.org/)
 [![React](https://img.shields.io/badge/react-18-61DAFB.svg?style=flat&logo=react&logoColor=white)](https://react.dev/)
 [![Docker](https://img.shields.io/badge/docker-ready-2496ED.svg?style=flat&logo=docker&logoColor=white)](https://www.docker.com/)
@@ -11,14 +11,17 @@
 
 ## ✨ 功能特性
 
-- 🤖 **智能问答**：选择知识库后，基于 RAG 技术提供精准回答，引用规范原文与条款出处
+- 🤖 **智能问答**：选择知识库后，基于 RAG 技术提供精准回答，引用规范原文与条款出处；支持连续多轮对话（V1.2.3）
+- 📊 **报告总结编制**（V1.1+）：上传图片/文档 + 知识库检索 → 两阶段生成（要点→完整报告）→ 导出 docx；支持 skill 库注入编制规则（V1.1.3）
+- 📽️ **PPT 制作**（V1.2.1+）：文本 + 附件文档 + 知识库 → 两阶段生成（大纲→完整演示文稿）→ 下载 16:9 的 .pptx；支持 PPT 专用 skill 选择
 - 🖼️ **检索结果图片展示**（V1.0.9）：查询结果与图片相关时，回答中直接展示相关图片，排版与文本一致
 - 📚 **多格式文档支持**：PDF、Word、TXT、Markdown 上传与解析
 - 📁 **Markdown 文件夹上传**（V1.0.8）：支持 `.md` 文件 + 图片文件夹批量上传，保留目录结构，预览时正确展示表格与图片
-- 🔍 **纯向量语义检索**（V1.0.7）：基于 pgvector 余弦相似度，支持规范编号精确匹配加权
-- 🔧 **多模型配置**：可配置多个 LLM API，支持启用/禁用切换
+- 🔍 **混合语义检索**（V1.2.3 默认）：BM25 分块关键词 + pgvector 余弦相似度 RRF 融合，精确表名/条款号类查询更稳
+- 🔧 **多模型配置**：可配置多个 LLM API，支持启用/禁用切换、上下文窗口设置（V1.2.3）
 - 📝 **流式输出**：AI 回答实时流式展示
 - 📖 **引用溯源**：每条回答标注信息来源，确保可追溯
+- 📋 **一键复制**（V1.1.4）：对话提问与回答均支持复制按钮，带「已复制」反馈
 
 ## 🏗️ 技术栈
 
@@ -38,33 +41,46 @@ Form_research/
 ├── backend/                        # FastAPI 后端
 │   ├── app/
 │   │   ├── routers/                # API 路由
-│   │   │   ├── chat.py             # 对话接口（SSE 流式）
+│   │   │   ├── chat.py             # 对话接口（SSE 流式 + 多轮历史）
 │   │   │   ├── admin_docs.py       # 文档管理（上传/列表/详情/解析）
 │   │   │   ├── admin_kb.py         # 知识库管理
-│   │   │   └── admin_llm.py        # LLM 配置管理
+│   │   │   ├── admin_llm.py        # LLM 配置管理
+│   │   │   ├── report.py           # 报告总结（V1.1+）
+│   │   │   └── ppt.py              # PPT 制作（V1.2.1+）
 │   │   ├── rag_service.py          # RAG 编排：检索、上下文构建、图片附带
-│   │   ├── hybrid_search.py        # 向量检索引擎（V1.0.7 纯向量方案）
+│   │   ├── hybrid_search.py        # 混合检索引擎（BM25 + 向量 RRF 融合）
+│   │   ├── context_budget.py       # 对话上下文 token 预算与历史裁剪（V1.2.3）
 │   │   ├── text_utils.py           # 分词 / Markdown 清洗 / BM25 打分
 │   │   ├── image_utils.py          # Markdown 图片解析与 URL 重写
 │   │   ├── vector_store.py         # pgvector 向量存取
 │   │   ├── embedding_service.py    # 本地/远程 Embedding 服务
 │   │   ├── chunking_service.py     # 文档分块（600 字符 + 150 重叠）
+│   │   ├── docx_service.py         # Markdown → docx 报告生成（V1.1）
+│   │   ├── pptx_service.py         # Markdown → pptx 演示文稿生成（V1.2.1）
+│   │   ├── skill_library.py        # 技能库读取与注入（V1.1.3，report/ppt 分离）
+│   │   ├── skills/                 # 技能文件目录
+│   │   │   ├── report/             # 报告编制技能
+│   │   │   └── ppt/                # PPT 制作技能
 │   │   ├── models.py               # SQLAlchemy 数据模型
 │   │   ├── schemas.py              # Pydantic 请求/响应模型
 │   │   ├── config.py               # 应用配置（pydantic-settings）
 │   │   └── version.py              # 版本号集中管理
 │   ├── Dockerfile                  # 多阶段构建
-│   └── requirements.txt            # Python 依赖
+│   ├── requirements.txt            # Python 依赖
+│   └── requirements-new.txt        # 新增/更新依赖（不影响主缓存层）
 ├── frontend/                       # React 前端
 │   ├── src/
 │   │   ├── pages/                  # 页面组件
 │   │   │   ├── Chat.tsx            # 前台对话
+│   │   │   ├── Report.tsx          # 报告总结（V1.1+）
+│   │   │   ├── Ppt.tsx             # PPT 制作（V1.2.1+）
 │   │   │   ├── KbDocuments.tsx     # 文档管理（含文件夹上传）
 │   │   │   ├── KbManagement.tsx    # 知识库管理
 │   │   │   └── LlmConfig.tsx       # LLM 配置
 │   │   ├── components/             # 公共组件
 │   │   │   ├── Header.tsx          # 页头导航
 │   │   │   ├── Sidebar.tsx         # 侧边栏
+│   │   │   ├── CopyButton.tsx      # 复制按钮（V1.1.4）
 │   │   │   └── MarkdownRenderer.tsx # Markdown 渲染器（表格/图片支持）
 │   │   ├── api.ts                  # API 客户端封装
 │   │   └── version.ts              # 版本号
@@ -157,13 +173,38 @@ docker compose logs -f app
 
 回到 **前台对话**：
 
-1. 顶部选择已创建的知识库
+1. 顶部选择已创建的知识库（或选择「不选择知识库」直接与大模型对话）
 2. 输入问题，按 Enter 或点击发送
 3. AI 基于知识库内容回答，并标注引用来源
-4. **图片展示（V1.0.9）**：当检索结果包含相关图片时：
+4. **连续对话**（V1.2.3）：同一会话内的历史消息自动注入上下文，支持多轮追问
+5. **图片展示**（V1.0.9）：当检索结果包含相关图片时：
    - 大模型会在回答的对应位置内嵌图片
    - 若未内嵌，后端自动追加「相关图片」小节
    - 保证图片相关的查询必然展示图片
+
+### 5. 报告总结编制
+
+进入 **报告总结** 页面：
+
+1. 可选选择知识库（不选则仅基于输入资料编制）
+2. 输入报告标题（用于 docx 文件名与首页标题）
+3. 在输入框中粘贴报告/参考资料文本
+4. 点击附件按钮上传图片或文档（docx/txt/md/pdf），大文档自动分块阅读
+5. 输入 `/` 选择编制技能（skill），选中后注入 system prompt 指令
+6. 点击发送，AI 先输出报告要点（流式显示），再静默生成完整报告
+7. 可展开查看完整报告、下载 docx、保存到左侧历史记录
+
+### 6. PPT 制作
+
+进入 **PPT 制作** 页面：
+
+1. 可选选择知识库（不选则仅基于输入文本制作）
+2. 输入演示文稿标题（用于 pptx 文件名与封面标题）
+3. 在输入框中粘贴文字内容
+4. 点击附件按钮上传参考文档（docx/txt/md/pdf），大文档自动分块阅读
+5. 输入 `/` 选择 PPT 制作技能（skill，独立于报告技能）
+6. 点击发送，AI 先输出大纲（流式显示），再静默生成完整演示文稿
+7. 可展开查看完整演示文稿、下载 16:9 的 .pptx、保存到左侧历史记录
 
 ## ⚙️ 环境变量
 
@@ -177,7 +218,12 @@ docker compose logs -f app
 | `EMBEDDING_DIM` | 可选 | `512` | 向量维度（需与模型匹配） |
 | `EMBEDDING_DEVICE` | 可选 | `cpu` | 推理设备（cpu/cuda） |
 | `ENABLE_QUERY_REWRITE` | 可选 | `true` | 是否开启 LLM 查询改写 |
-| `RETRIEVE_MODE` | 可选 | `vector_only` | 检索模式 |
+| `RETRIEVE_MODE` | 可选 | `hybrid` | 检索模式：`hybrid`（默认）/ `vector_only` / `bm25_fallback` |
+| `HYBRID_BM25_WEIGHT` | 可选 | `0.5` | RRF 融合中 BM25 权重（仅 hybrid 模式生效） |
+| `HYBRID_VECTOR_WEIGHT` | 可选 | `0.5` | RRF 融合中向量检索权重（仅 hybrid 模式生效） |
+| `EMBEDDING_QUERY_PROMPT` | 可选 | `为这个句子生成表示以用于检索相关文章：` | BGE 查询指令前缀（仅查询侧，V1.2.3） |
+| `DOC_TEXT_CAP` | 可选 | `500000` | 单文档入库文本上限（字符，V1.2.3） |
+| `CHUNK_MAX_COUNT` | 可选 | `1500` | 单文档最大分块数（V1.2.3） |
 | `CORS_ORIGINS` | 可选 | `*` | CORS 允许来源 |
 
 ## 📊 架构详解
@@ -185,15 +231,15 @@ docker compose logs -f app
 ### RAG 处理流程
 
 ```
-用户提问 → [查询改写] → [纯向量检索] → [图片提取]
+用户提问 → [查询改写] → [混合检索] → [图片提取]
                                            ↓
-                                     LLM 流式回答 ← 系统提示词 + 检索片段 + 相关图片
+                        LLM 流式回答 ← 系统提示词 + 历史对话 + 检索片段 + 相关图片
                                            ↓
                                      对话记录保存 + 引用来源标注
 ```
 
-1. **查询改写**：LLM 将口语化查询扩展为工程规范专业术语（如"焊缝探伤"→"焊缝探伤比例 超声波探伤 射线探伤 焊缝质量"）
-2. **纯向量检索**：基于 pgvector 余弦相似度召回 Top-5 相关分块
+1. **查询改写**：LLM 将口语化查询扩展为工程规范专业术语（如"焊缝探伤"→"焊缝探伤比例 超声波探伤 射线探伤 焊缝质量"），改写词只喂关键词路径
+2. **混合检索**（V1.2.3 默认）：BM25 分块关键词 + pgvector 余弦相似度 RRF 融合，召回 Top-5 相关分块；向量侧用原始提问（BGE 查询指令前缀）
 3. **图片提取**：从检索分块中提取 Markdown 图片引用，重写为后端可访问 URL
 4. **上下文构建**：系统提示词 + 检索片段 + 用户问题 + 相关图片
 5. **流式生成**：LLM 实时流式返回回答
@@ -204,6 +250,9 @@ docker compose logs -f app
 ```
 文档上传 → 磁盘存储 → 解析服务 → 文本提取 → 600字符分块 → Embedding 向量化 → pgvector 存储
           (uploads/)  (MinerU/本地)  (pdfplumber)  (150字符重叠)   (BAAI/bge-small-zh-v1.5)
+                                                       ↓
+                                          V1.2.3：表格不拆分（原子块）
+                                          持久化所属章节标题
 ```
 
 ## 🛠️ 开发模式
@@ -298,6 +347,41 @@ docker compose up -d
 </details>
 
 ## 📝 版本历史
+
+### V1.2.3 (2026-08-04)
+- 🔍 **检索精度修复**：默认切换为 BM25 分块 + 向量 RRF 混合检索，修复融合 key 不一致导致同一块无法融合的问题；"大变形分级标准表"这类精确表名查询更稳
+- ✨ **查询改写不稀释原问题**：改写词只喂关键词路径，向量检索始终用原始提问
+- ✨ **BGE 查询指令前缀**：bge 系 embedding 模型查询侧自动加官方指令，短查询/同义查询召回提升（文档侧不加，无需重索引）
+- 💬 **连续对话**：同一会话历史消息注入大模型上下文；LLM 配置新增「上下文窗口(tokens)」字段，按模型窗口自动裁剪历史
+- 🛠️ **分块优化**：Markdown 表格作为原子块不拆分（表名+表体同块），分块持久化所属章节标题（旧文档需重新索引生效）
+
+### V1.2.2 (2026-08-04)
+- ✨ PPT 制作页支持上传附件文档（docx/txt/md/pdf），大模型按文档内容制作 PPT；大文档自动分块阅读
+- 🛠️ skill 库按功能界面物理分离（`skills/report/` 与 `skills/ppt/`），互不干扰、根目录杂项自动忽略
+
+### V1.2.1 (2026-08-04)
+- ✨ 新增 PPT 制作功能：纯文本 + 知识库 → 两阶段生成（大纲→完整演示文稿）→ 下载 16:9 的 .pptx
+- ✨ PPT skill 选择（输入 `/` 弹出菜单，scope: ppt 独立于报告 skill）
+- ✨ 已生成 PPT 的历史记录：左侧保存、回看详情、重新下载
+
+### V1.1.4 (2026-08-04)
+- ✨ 全部大模型对话界面（前台对话、报告总结）新增提问与回复的复制按钮，带「已复制」反馈与局域网明文 http 降级
+- ✨ 报告总结历史记录保存并展示最后一条用户提问，详情页提供提问复制按钮
+
+### V1.1.3 (2026-08-03)
+- ✨ 报告总结引入 skill 库（`skill_library.py`），用户输入 `/` 选择技能注入 system prompt 指令块
+- ✨ 报告输出 token 上限取 `max(LLM 配置, REPORT_MAX_TOKENS)`，防止完整报告被截断
+
+### V1.1.2 (2026-08-03)
+- ✨ 报告总结两阶段生成：先流式输出要点（显示在对话框），再静默生成完整报告（供导出与展开查看）
+
+### V1.1.1 (2026-08-03)
+- ✨ 前台对话与报告总结支持不选知识库（纯问答/纯资料编制）
+- ✨ 报告总结支持上传 docx/txt/md/pdf 文档，提取文本注入 LLM 上下文
+
+### V1.1.0 (2026-08-03)
+- ✨ 新增报告总结功能：图片/文档上传 + 多轮对话（SSE）+ docx 导出 + 手动保存
+- ✨ 大文档超 `REPORT_DOC_TEXT_CAP` 时按章节分块 map-reduce 提炼要点，首尾保留防末尾章节丢失
 
 ### V1.0.9 (2026-08-03)
 - ✨ 新增检索结果图片展示功能，查询结果与图片相关时在回答中展示

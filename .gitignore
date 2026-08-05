@@ -44,3 +44,4 @@ Thumbs.db
 mineru_api/
 extract_pages.py
 list_api.py
+body.json

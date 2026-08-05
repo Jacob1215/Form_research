@@ -30,6 +30,20 @@ def _ext(filename: str) -> str:
     return os.path.splitext(filename)[1].lower().lstrip(".")
 
 
+def _cap_text(text: str, file_path: str) -> str:
+    """按 DOC_TEXT_CAP 截断入库文本，并在截断时记告警。
+
+    V1.2.3：大规范（如公路隧道设计规范）远超 10 万字符，硬截断会丢掉靠后章节/表格，
+    表现为"查不到靠后内容"。上限改为可配置，且截断时明确告警便于排查。
+    """
+    if len(text) > settings.DOC_TEXT_CAP:
+        logger.warning(
+            "文档 %s 文本 %d 字符超过上限 %d，已截断（靠后内容不入库）",
+            file_path, len(text), settings.DOC_TEXT_CAP,
+        )
+    return text[: settings.DOC_TEXT_CAP]
+
+
 def _extract_text(file_path: str, file_type: str) -> str | None:
     """从文档中提取文本内容，供 RAG 检索使用。
 
@@ -40,7 +54,7 @@ def _extract_text(file_path: str, file_type: str) -> str | None:
         if file_type in TEXT_EXT:
             with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
                 text = f.read()
-            return text[:100000]
+            return _cap_text(text, file_path)
 
         if file_type == "pdf":
             # 优先使用 pdfplumber（中文支持远优于 pypdf）
@@ -71,7 +85,7 @@ def _extract_text(file_path: str, file_type: str) -> str | None:
                 except Exception as e:
                     logger.warning("PyMuPDF 提取失败: %s", e)
 
-            return full_text[:100000] if full_text.strip() else None
+            return _cap_text(full_text, file_path) if full_text.strip() else None
 
         if file_type == "docx":
             from docx import Document as DocxDocument
@@ -83,7 +97,7 @@ def _extract_text(file_path: str, file_type: str) -> str | None:
                     cells = [c.text.strip() for c in row.cells if c.text.strip()]
                     if cells:
                         parts.append(" | ".join(cells))
-            return "\n".join(parts)[:100000] if parts else None
+            return _cap_text("\n".join(parts), file_path) if parts else None
 
         return None
     except Exception as e:  # noqa: BLE001
@@ -425,7 +439,7 @@ def upload_folder(
 
         if ext in FOLDER_DOC_EXT:
             # md 文件：创建 Document
-            content_text = data.decode("utf-8", errors="ignore")[:100000]
+            content_text = _cap_text(data.decode("utf-8", errors="ignore"), save_path)
             doc = Document(
                 kb_id=kb_id,
                 file_name=os.path.basename(filename),
@@ -533,7 +547,7 @@ def parse_document(doc_id: int, db: Session = Depends(get_db)):
         # 同时更新 content_text（用于 RAG 检索）
         full_text = "\n\n".join(p["text"] for p in result["pages"] if p.get("text"))
         if full_text:
-            doc.content_text = full_text[:100000]  # 限制存储上限
+            doc.content_text = _cap_text(full_text, doc.file_path)
 
         db.commit()
         db.refresh(doc)
@@ -702,7 +716,10 @@ def _auto_index_document(db: Session, doc: Document) -> int:
     # 3. 存储
     if embeddings is not None and len(embeddings) == len(chunks):
         chunk_dicts = [
-            {"index": c.index, "content": c.content, "embedding": emb, "token_count": c.token_count}
+            {
+                "index": c.index, "content": c.content, "embedding": emb,
+                "token_count": c.token_count, "section_title": c.section_title,
+            }
             for c, emb in zip(chunks, embeddings)
         ]
     else:
@@ -710,7 +727,10 @@ def _auto_index_document(db: Session, doc: Document) -> int:
         if embeddings is None:
             logger.info("向量化服务不可用，存储无向量分块: doc_id=%d", doc.id)
         chunk_dicts = [
-            {"index": c.index, "content": c.content, "embedding": None, "token_count": c.token_count}
+            {
+                "index": c.index, "content": c.content, "embedding": None,
+                "token_count": c.token_count, "section_title": c.section_title,
+            }
             for c in chunks
         ]
     vs = VectorStore(db)

@@ -15,6 +15,8 @@ import logging
 from typing import Iterator
 from dataclasses import dataclass, field
 
+from .config import settings
+
 logger = logging.getLogger("app.chunking")
 
 
@@ -50,7 +52,13 @@ class ChunkingService:
     _CHUNK_SIZE = 600       # 字符数
     _CHUNK_OVERLAP = 150    # 重叠字符数
     _MIN_CHUNK_SIZE = 80    # 最小分块大小，小于此值的合并到前一块
-    _MAX_CHUNKS = 500       # 单文档最大分块数
+    # V1.2.3：单文档最大分块数改为可配置（默认 1500），配合 DOC_TEXT_CAP 避免大规范靠后章节被丢
+    _MAX_CHUNKS = settings.CHUNK_MAX_COUNT
+
+    # V1.2.3：表格行识别。连续 Markdown 表格行（含 |）作为原子块不拆，
+    # 分隔行 |---|---| 不算数据行。保证"表名/表头/表体"同块，检索不丢表体。
+    _TABLE_ROW_RE = re.compile(r'^\s*\|.*\|\s*$')
+    _TABLE_SEP_RE = re.compile(r'^\s*\|[\s\-:|]+\|\s*$')
 
     def chunk_text(self, text: str, file_name: str = "") -> list[ChunkMeta]:
         """将文档文本分割为语义连贯的分块。
@@ -172,31 +180,100 @@ class ChunkingService:
 
         return result
 
+    def _tokenize_protected(self, text: str) -> list[str]:
+        """将文本切成 token 列表：普通句子 或 整段表格块（不可拆分的原子）。
+
+        V1.2.3：连续 Markdown 表格行作为一个原子块（允许行间空行容错），
+        并把紧邻其上的"表X 标题"行并入，保证"表名 + 表体"同块、检索不丢表体；
+        其余文本按句子边界切分。
+        """
+        # 表格标题行模式：如"表5.1 大变形分级标准表"、"附表A"
+        caption_re = re.compile(r'^\s*(表|附表)\s*[\d.、\-]*')
+        lines = text.split("\n")
+        tokens: list[str] = []
+        pending: list[str] = []
+
+        def flush_pending():
+            nonlocal pending
+            for ln in pending:
+                for sent in re.split(r'(?<=[。！？；])', ln):
+                    if sent.strip():
+                        tokens.append(sent)
+            pending = []
+
+        i = 0
+        n = len(lines)
+        while i < n:
+            line = lines[i]
+            if self._TABLE_ROW_RE.match(line) and not self._TABLE_SEP_RE.match(line):
+                block: list[str] = []
+                # 若 pending 尾部是"表X 标题"行，并入表格块，避免表名与表体分块
+                if pending:
+                    idx = len(pending) - 1
+                    while idx >= 0 and not pending[idx].strip():
+                        idx -= 1
+                    if idx >= 0:
+                        cand = pending[idx].strip()
+                        if len(cand) <= 80 and caption_re.match(cand):
+                            block.append(pending[idx])
+                            pending = pending[:idx]
+                flush_pending()
+                block.append(line)
+                j = i + 1
+                while j < n:
+                    nxt = lines[j]
+                    if self._TABLE_ROW_RE.match(nxt) and not self._TABLE_SEP_RE.match(nxt):
+                        block.append(nxt)
+                        j += 1
+                    elif nxt.strip() == "" and j + 1 < n:
+                        nxt2 = lines[j + 1]
+                        if self._TABLE_ROW_RE.match(nxt2) and not self._TABLE_SEP_RE.match(nxt2):
+                            block.append(nxt)
+                            j += 1
+                        else:
+                            break
+                    else:
+                        break
+                tokens.append("\n".join(block))
+                i = j
+            else:
+                pending.append(line)
+                i += 1
+
+        flush_pending()
+        return tokens
+
     def _split_by_sentences(self, text: str) -> list[str]:
         """按句子边界分块，保持重叠。
 
-        句子边界：。！？；\n
+        句子边界：。！？；\n。V1.2.3：连续表格块作为原子单元不拆分，
+        重叠按"整 token"回退，表格块不会被拦腰截断。
         """
-        # 按句子分割
-        sentences = re.split(r'(?<=[。！？；\n])', text)
-        sentences = [s for s in sentences if s.strip()]
-
-        if not sentences:
+        tokens = self._tokenize_protected(text)
+        if not tokens:
             return [text]
 
         chunks: list[str] = []
         current = ""
-        overlap_buf = ""
+        current_parts: list[str] = []
 
-        for sent in sentences:
-            if len(current) + len(sent) > self._CHUNK_SIZE and current:
+        for token in tokens:
+            if len(current) + len(token) > self._CHUNK_SIZE and current:
                 chunks.append(current.strip())
-                # 重叠：保留最后几个句子
-                overlap_parts = re.split(r'(?<=[。！？；])', current)
-                overlap_buf = "".join(overlap_parts[-2:]) if len(overlap_parts) > 2 else ""
-                current = overlap_buf + sent
-            else:
-                current += sent
+                # 重叠：从 current 末尾按整 token 回退，最多保留 OVERLAP 字符
+                take = 0
+                acc = 0
+                for t in reversed(current_parts):
+                    if acc + len(t) > self._CHUNK_OVERLAP:
+                        break
+                    acc += len(t)
+                    take += 1
+                if take == 0 and current_parts:
+                    take = 1  # 至少带上前一个 token（可能是整张表格），避免上下文断裂
+                current = "".join(current_parts[len(current_parts) - take:])
+                current_parts = current_parts[len(current_parts) - take:]
+            current += token
+            current_parts.append(token)
 
         if current.strip():
             chunks.append(current.strip())

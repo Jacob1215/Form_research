@@ -39,6 +39,7 @@ class VectorStore:
         - content: str    分块文本
         - embedding: list[float] | None  嵌入向量
         - token_count: int (可选)
+        - section_title: str | None (可选，V1.2.3 所属章节标题)
         """
         # 删除旧分块（幂等）
         self.delete_chunks(doc_id)
@@ -55,6 +56,7 @@ class VectorStore:
                 chunk_index=c["index"],
                 content=c["content"],
                 token_count=c.get("token_count", 0),
+                section_title=c.get("section_title"),
                 embedding=vec_value,
             )
             self.db.add(chunk)
@@ -108,10 +110,10 @@ class VectorStore:
         query_embedding: list[float],
         top_k: int = 10,
         score_threshold: float = 0.3,
-    ) -> list[tuple[int, int, str, float, str | None]]:
+    ) -> list[tuple[int, int, str, float, str | None, str | None]]:
         """余弦相似度搜索。
 
-        返回: list[(doc_id, chunk_index, content, similarity, file_name)]
+        返回: list[(doc_id, chunk_index, content, similarity, file_name, section_title)]
         按相似度降序排列。
 
         使用 pgvector 的 <=> 余弦距离运算符：
@@ -130,7 +132,8 @@ class VectorStore:
                     dc.chunk_index,
                     dc.content,
                     1 - (dc.embedding <=> :query_vec) AS similarity,
-                    d.file_name
+                    d.file_name,
+                    dc.section_title
                 FROM document_chunks dc
                 JOIN documents d ON d.id = dc.doc_id
                 WHERE dc.kb_id = :kb_id
@@ -151,7 +154,10 @@ class VectorStore:
             rows = result.fetchall()
 
             results = [
-                (row.doc_id, row.chunk_index, row.content, float(row.similarity), row.file_name)
+                (
+                    row.doc_id, row.chunk_index, row.content,
+                    float(row.similarity), row.file_name, row.section_title,
+                )
                 for row in rows
             ]
             logger.info(

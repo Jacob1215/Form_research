@@ -23,6 +23,8 @@ class LLMConfig(Base):
     model_name: Mapped[str] = mapped_column(String(128), nullable=False)
     temperature: Mapped[float] = mapped_column(Float, default=0.7)
     max_tokens: Mapped[int] = mapped_column(Integer, default=2048)
+    # V1.2.3：模型上下文窗口（tokens），用于对话历史裁剪预算；后台可编辑
+    context_window: Mapped[int] = mapped_column(Integer, default=64000)
     timeout: Mapped[int] = mapped_column(Integer, default=30)
     is_active: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
@@ -80,6 +82,8 @@ class DocumentChunk(Base):
     chunk_index: Mapped[int] = mapped_column(Integer, nullable=False)
     content: Mapped[str] = mapped_column(Text, nullable=False)
     token_count: Mapped[int] = mapped_column(Integer, default=0)
+    # V1.2.3：所属章节标题（ChunkMeta.section_title 持久化，检索/回答展示）
+    section_title: Mapped[Optional[str]] = mapped_column(String(256), nullable=True)
     embedding = mapped_column(Vector(512), nullable=True)  # 512维，匹配 bge-small-zh-v1.5
 
     document: Mapped["Document"] = relationship("Document", back_populates="chunks")
@@ -122,6 +126,25 @@ class ReportRecord(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     title: Mapped[str] = mapped_column(String(256), default="报告总结", nullable=False)
     content: Mapped[str] = mapped_column(Text, nullable=False)
+    # 编制时的知识库；不选知识库时为 NULL
+    kb_id: Mapped[Optional[int]] = mapped_column(
+        Integer, ForeignKey("knowledge_bases.id", ondelete="SET NULL"),
+        nullable=True, index=True,
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class PptRecord(Base):
+    """PPT 记录（V1.2.1）— PPT 制作功能手动保存的已生成演示文稿。"""
+
+    __tablename__ = "ppt_records"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    title: Mapped[str] = mapped_column(String(256), default="PPT", nullable=False)
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    # 记录最后一条用户提问，供历史记录展示与复制
+    question: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     # 编制时的知识库；不选知识库时为 NULL
     kb_id: Mapped[Optional[int]] = mapped_column(
         Integer, ForeignKey("knowledge_bases.id", ondelete="SET NULL"),

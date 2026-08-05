@@ -31,6 +31,7 @@ export interface LlmConfigItem {
   model_name: string
   temperature?: number
   max_tokens?: number
+  context_window?: number
   timeout?: number
   is_active?: boolean
   created_at?: string
@@ -49,6 +50,7 @@ export interface LlmConfigInput {
   model_name: string
   temperature?: number
   max_tokens?: number
+  context_window?: number
   timeout?: number
   is_active?: boolean
 }
@@ -260,6 +262,7 @@ interface StreamCallbacks {
   onError?: (err: string) => void
   onProgress?: (message: string) => void
   onReport?: (content: string) => void
+  onPpt?: (content: string) => void
 }
 
 function streamSSE(path: string, body: unknown, cb: StreamCallbacks): StreamHandle {
@@ -290,6 +293,12 @@ function streamSSE(path: string, body: unknown, cb: StreamCallbacks): StreamHand
         // V1.1.2：完整报告内容（对话框只显示要点，完整报告用于展开查看与 docx 导出）
         const content = evt.content
         if (typeof content === 'string') cb.onReport?.(content)
+        break
+      }
+      case 'ppt': {
+        // V1.2.1：完整演示文稿内容（对话框只显示大纲，完整内容用于展开查看与 pptx 导出）
+        const content = evt.content
+        if (typeof content === 'string') cb.onPpt?.(content)
         break
       }
       case 'token': {
@@ -475,14 +484,15 @@ export interface ReportRecordItem {
 
 export interface ReportRecordDetailItem extends ReportRecordItem {
   content: string
+  question?: string | null
 }
 
 export interface ReportRecordListResponse {
   items: ReportRecordItem[]
 }
 
-export const saveReportRecord = (title: string, content: string): Promise<ReportRecordDetailItem> =>
-  apiPost<ReportRecordDetailItem>('/api/report/records', { title, content })
+export const saveReportRecord = (title: string, content: string, question?: string): Promise<ReportRecordDetailItem> =>
+  apiPost<ReportRecordDetailItem>('/api/report/records', { title, content, question })
 
 export const fetchReportRecords = (): Promise<ReportRecordListResponse> =>
   apiGet<ReportRecordListResponse>('/api/report/records')
@@ -492,3 +502,54 @@ export const fetchReportRecord = (id: string): Promise<ReportRecordDetailItem> =
 
 export const deleteReportRecord = (id: string): Promise<{ ok: boolean }> =>
   apiDelete<{ ok: boolean }>(`/api/report/records/${id}`)
+
+/* ------------------------- PPT 制作功能（V1.2.1+） ------------------------- */
+// PPT 复用报告的消息/附件/skill/记录类型（后端返回结构一致）。
+
+export interface StreamPptParams {
+  kb_id: string | null
+  title?: string
+  messages: ReportMessage[]
+  skills?: string[]
+  onToken: (content: string) => void
+  onDone?: () => void
+  onError?: (err: string) => void
+  onProgress?: (message: string) => void
+  onPpt?: (content: string) => void
+}
+
+export function streamPptChat(params: StreamPptParams): StreamHandle {
+  return streamSSE('/api/ppt/chat', {
+    kb_id: params.kb_id ?? null,
+    title: params.title,
+    messages: params.messages,
+    skills: params.skills,
+  }, params)
+}
+
+// V1.2.1：PPT skill 清单（scope: ppt），结构同报告 skill
+export const fetchPptSkills = (): Promise<ReportSkillsResponse> =>
+  apiGet<ReportSkillsResponse>('/api/ppt/skills')
+
+export async function exportPptx(title: string, content: string): Promise<Blob> {
+  const res = await fetch('/api/ppt/export', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ title, content }),
+  })
+  if (!res.ok) throw new Error(await extractError(res))
+  return res.blob()
+}
+
+// PPT 记录（手动保存），返回结构同报告记录（含 question 字段）
+export const savePptRecord = (title: string, content: string, question?: string): Promise<ReportRecordDetailItem> =>
+  apiPost<ReportRecordDetailItem>('/api/ppt/records', { title, content, question })
+
+export const fetchPptRecords = (): Promise<ReportRecordListResponse> =>
+  apiGet<ReportRecordListResponse>('/api/ppt/records')
+
+export const fetchPptRecord = (id: string): Promise<ReportRecordDetailItem> =>
+  apiGet<ReportRecordDetailItem>(`/api/ppt/records/${id}`)
+
+export const deletePptRecord = (id: string): Promise<{ ok: boolean }> =>
+  apiDelete<{ ok: boolean }>(`/api/ppt/records/${id}`)

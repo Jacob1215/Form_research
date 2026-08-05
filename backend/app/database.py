@@ -94,6 +94,16 @@ def _auto_migrate(engine) -> None:
                 ))
                 logger.info("已添加列: documents.%s", col)
 
+        # V1.1.4：report_records.question 记录用户提问（历史记录展示与复制）。
+        # 对已存在库生效；新库由 create_all 直接建列。幂等。
+        question_exists = conn.execute(text(
+            "SELECT 1 FROM information_schema.columns "
+            "WHERE table_name='report_records' AND column_name='question'"
+        )).first()
+        if not question_exists:
+            conn.execute(text("ALTER TABLE report_records ADD COLUMN question TEXT"))
+            logger.info("已添加列: report_records.question")
+
         # V1.1.1：conversations.kb_id 改为允许为空（支持不选知识库对话）。
         # 对已存在库生效；新库由 create_all 直接建为可空。DROP NOT NULL 幂等。
         try:
@@ -101,6 +111,30 @@ def _auto_migrate(engine) -> None:
             logger.info("已迁移: conversations.kb_id 允许为空")
         except Exception as e:  # noqa: BLE001
             logger.warning("conversations.kb_id 迁移跳过: %s", e)
+
+        # V1.2.3：llm_configs.context_window（对话历史裁剪预算，后台可编辑）。
+        # 对已存在库生效；新库由 create_all 直接建列。幂等。
+        ctx_exists = conn.execute(text(
+            "SELECT 1 FROM information_schema.columns "
+            "WHERE table_name='llm_configs' AND column_name='context_window'"
+        )).first()
+        if not ctx_exists:
+            conn.execute(text(
+                "ALTER TABLE llm_configs ADD COLUMN context_window INTEGER DEFAULT 64000"
+            ))
+            logger.info("已添加列: llm_configs.context_window")
+
+        # V1.2.3：document_chunks.section_title（分块所属章节，重索引后回填）。
+        # 对已存在库生效；新库由 create_all 直接建列。幂等。
+        st_exists = conn.execute(text(
+            "SELECT 1 FROM information_schema.columns "
+            "WHERE table_name='document_chunks' AND column_name='section_title'"
+        )).first()
+        if not st_exists:
+            conn.execute(text(
+                "ALTER TABLE document_chunks ADD COLUMN section_title VARCHAR(256)"
+            ))
+            logger.info("已添加列: document_chunks.section_title")
 
         # 检查并创建 document_chunks 表
         table_exists = conn.execute(text(
@@ -116,6 +150,7 @@ def _auto_migrate(engine) -> None:
                     chunk_index INTEGER NOT NULL,
                     content TEXT NOT NULL,
                     token_count INTEGER DEFAULT 0,
+                    section_title VARCHAR(256),
                     embedding vector(512)
                 )
             """))

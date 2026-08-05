@@ -60,6 +60,7 @@ class LLMConfigOut(BaseModel):
     model_name: str
     temperature: float
     max_tokens: int
+    context_window: int = 64000
     timeout: int
     is_active: bool
     created_at: str | None = None
@@ -76,6 +77,7 @@ class LLMConfigOut(BaseModel):
             model_name=obj.model_name,
             temperature=obj.temperature,
             max_tokens=obj.max_tokens,
+            context_window=getattr(obj, "context_window", None) or 64000,
             timeout=obj.timeout,
             is_active=obj.is_active,
             created_at=_to_iso(obj.created_at),
@@ -91,6 +93,7 @@ class LLMConfigCreate(BaseModel):
     model_name: str
     temperature: Optional[float] = 0.7
     max_tokens: Optional[int] = 2048
+    context_window: Optional[int] = 64000
     timeout: Optional[int] = 30
     is_active: Optional[bool] = False
 
@@ -103,6 +106,7 @@ class LLMConfigUpdate(BaseModel):
     model_name: Optional[str] = None
     temperature: Optional[float] = None
     max_tokens: Optional[int] = None
+    context_window: Optional[int] = None
     timeout: Optional[int] = None
     is_active: Optional[bool] = None
 
@@ -263,3 +267,25 @@ class ReportRecordOut(BaseModel):
 
 class ReportRecordDetail(ReportRecordOut):
     content: str
+
+
+# ---------- PPT 制作（V1.2.1+） ----------
+
+class PptChatRequest(BaseModel):
+    # kb_id 允许为空（不选知识库，纯文本编制）
+    kb_id: Optional[int] = None
+    title: Optional[str] = None
+    # 本次生成选用的 PPT skill 名称列表（未选则为空/None，不注入技能指令）
+    skills: Optional[list[str]] = None
+    messages: list[ReportMessage] = Field(..., min_length=1)
+
+
+class PptExportRequest(BaseModel):
+    title: Optional[str] = None
+    content: str = Field(..., min_length=1)
+
+
+class PptRecordCreate(BaseModel):
+    title: Optional[str] = None
+    content: str = Field(..., min_length=1)
+    question: Optional[str] = None

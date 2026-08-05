@@ -4,6 +4,7 @@ import Header from './components/Header'
 import Sidebar from './components/Sidebar'
 import Chat from './pages/Chat'
 import Report from './pages/Report'
+import Ppt from './pages/Ppt'
 import LlmConfig from './pages/LlmConfig'
 import KbManagement from './pages/KbManagement'
 import KbDocuments from './pages/KbDocuments'
@@ -32,6 +33,7 @@ export default function App() {
       <Routes>
         <Route path="/" element={<Chat />} />
         <Route path="/report" element={<Report />} />
+        <Route path="/ppt" element={<Ppt />} />
         <Route
           path="/admin/llm"
           element={

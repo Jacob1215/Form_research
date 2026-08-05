@@ -16,7 +16,7 @@ from ..schemas import (
 )
 from ..security import decrypt
 from ..llm_provider import factory as llm_factory
-from ..rag_service import retrieve, retrieve_with_hybrid, build_prompt
+from ..rag_service import retrieve, retrieve_with_hybrid, build_chat_messages, SYSTEM_PROMPT
 from ..config import settings
 
 logger = logging.getLogger("app.chat")
@@ -110,6 +110,22 @@ def _stream_chat(request: Request, kb_id: Optional[int], message: str, conversat
 
         yield _sse({"type": "start", "conversation_id": conv.id})
 
+        # V1.2.3：加载会话历史用于多轮连续对话。
+        # 当前 user 消息尚未入库，天然排除本轮；仅取最近 200 条控制内存/时延，
+        # 过长历史由 build_chat_messages 按 context_window 预算裁剪。
+        history_rows = db.execute(
+            select(Message)
+            .where(Message.conv_id == conv.id)
+            .order_by(Message.created_at.desc(), Message.id.desc())
+            .limit(200)
+        ).scalars().all()
+        history_rows.reverse()
+        history: list[dict] = [
+            {"role": m.role, "content": m.content}
+            for m in history_rows
+            if m.role in ("user", "assistant")
+        ]
+
         user_msg = Message(conv_id=conv.id, role="user", content=message)
         db.add(user_msg)
         db.commit()
@@ -127,7 +143,7 @@ def _stream_chat(request: Request, kb_id: Optional[int], message: str, conversat
         # V1.1.1：不选知识库（kb_id 为空）时跳过检索，仅凭大模型回答
         results: list = []
         if kb_id is not None:
-            rewritten_query = message
+            bm25_query = message
             try:
                 # 查询改写（可选，用 LLM 将口语化查询扩展为专业术语）
                 if settings.ENABLE_QUERY_REWRITE:
@@ -137,15 +153,17 @@ def _stream_chat(request: Request, kb_id: Optional[int], message: str, conversat
                             message, llm.api_url, api_key, llm.model_name
                         )
                         if rewritten and rewritten != message:
-                            rewritten_query = f"{message} {rewritten}"
-                            logger.info("查询改写: %r → %r", message, rewritten_query[:80])
+                            # V1.2.3：改写词只喂 BM25 关键词路径，向量仍用原始 message，
+                            # 避免改写稀释"大变形分级标准表"这类精确表名的向量信号
+                            bm25_query = f"{message} {rewritten}"
+                            logger.info("查询改写: %r → %r", message, bm25_query[:80])
                     except Exception as e:
                         logger.debug("查询改写跳过: %s", e)
 
-                # 向量检索（V1.0.7 方案 A：纯向量；检索不可用时内部降级 BM25）
+                # V1.2.3 默认 hybrid：向量用原始 message（retrieve_with_hybrid 内部分离）
                 results = retrieve_with_hybrid(
                     db, kb_id, message,
-                    top_k=5, rewritten_query=rewritten_query,
+                    top_k=5, bm25_query=bm25_query,
                 )
             except Exception as e:  # noqa: BLE001
                 # 检索异常：直接报错让用户感知问题
@@ -169,14 +187,25 @@ def _stream_chat(request: Request, kb_id: Optional[int], message: str, conversat
         if references_payload:
             yield _sse({"type": "references", "references": references_payload})
 
-        # 构造 prompt 并流式调用 LLM：有知识库走 RAG 提示词；无知识库走通用提示词
+        # V1.2.3：构造 prompt 并流式调用 LLM。
+        # 有知识库走 RAG 提示词（历史 + 当前检索上下文）；无知识库走通用提示词（历史纯透传）。
+        # 两者都按 llm.context_window 预算裁剪历史，避免撑爆模型上下文。
         if kb_id is not None:
-            messages = build_prompt(message, results)
+            messages = build_chat_messages(
+                message, results, history,
+                system_prompt=SYSTEM_PROMPT,
+                context_window=llm.context_window or 0,
+                max_tokens=llm.max_tokens or 2048,
+                include_context=True,
+            )
         else:
-            messages = [
-                {"role": "system", "content": GENERIC_SYSTEM_PROMPT},
-                {"role": "user", "content": message},
-            ]
+            messages = build_chat_messages(
+                message, [], history,
+                system_prompt=GENERIC_SYSTEM_PROMPT,
+                context_window=llm.context_window or 0,
+                max_tokens=llm.max_tokens or 2048,
+                include_context=False,
+            )
 
         class _Cfg:
             pass

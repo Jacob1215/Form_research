@@ -1,14 +1,14 @@
-"""RAG 检索引擎（V1.0.7 方案 A：纯向量语义检索）。
+"""RAG 检索引擎（V1.2.3：默认 hybrid 混合检索）。
 
 检索流程：
-1. 查询改写（可选，用 LLM 将口语化查询扩展为专业术语）
-2. 向量语义检索（基于 pgvector 余弦相似度）
-3. 截断、返回 top_k
+1. 查询改写（可选，用 LLM 将口语化查询扩展为专业术语，改写词只喂 BM25 关键词路径）
+2. 向量语义检索（基于 pgvector 余弦相似度，bge 系查询侧自动加官方指令前缀）
+3. BM25 分块 + 向量 RRF 融合（RETRIEVE_MODE=hybrid 默认）→ 截断、返回 top_k
 
 设计原则：
-- 默认使用纯向量检索（RETRIEVE_MODE=vector_only），不再自动降级 BM25
-- 向量检索不可用时抛异常，提示用户重新索引，而非静默降级
-- BM25 相关函数保留作为回滚备选（切换 RETRIEVE_MODE=hybrid 可恢复混合检索）
+- 默认使用混合检索（BM25 分块 + 向量 RRF），精确表名/条款号类查询更稳
+- vector_only（纯向量）保留为可选项：无向量时抛异常提示重新索引，不静默降级
+- hybrid 模式无向量时退化为 BM25 分块检索（不抛异常）
 - BM25 打分复用 text_utils.bm25_rank / substring_rank，与 rag_service.retrieve 共享同一核心
 - 规范编号精确匹配在 BM25 模式中给予高权重
 """
@@ -35,10 +35,10 @@ def _bm25_search_chunks(
     query_keywords: list[str],
     spec_codes: list[str],
     top_k: int = 10,
-) -> list[tuple[int, float, str, str | None]]:
+) -> list[tuple[int, int, int, float, str, str | None, str | None]]:
     """BM25 关键词检索分块。
 
-    返回: list[(chunk_id, bm25_score, chunk_content, doc_file_name)]
+    返回: list[(chunk_id, doc_id, chunk_index, bm25_score, chunk_content, doc_file_name, section_title)]
     打分复用 text_utils.bm25_rank，行为与重构前一致。
     """
     # 获取知识库中所有分块
@@ -56,7 +56,37 @@ def _bm25_search_chunks(
 
     items = [(chunk.id, chunk.content or "", file_name) for chunk, file_name in rows]
     ranked = bm25_rank(items, query_keywords, spec_codes, top_k=top_k)
-    return [(chunk_id, score, text, file_name) for chunk_id, score, text, file_name in ranked]
+
+    # BM25 词频 0 时，降级子串匹配兜底（复用 text_utils.substring_rank，
+    # 帮助"大变形分级标准表"这类精确表名在词频 0 时仍能靠字面命中）
+    if not ranked:
+        from .text_utils import substring_rank
+
+        substr = substring_rank(items, query_keywords, spec_codes, top_k=top_k)
+        if substr:
+            item_map = {iid: (text, fname) for iid, text, fname in items}
+            ranked = [
+                (iid, s, item_map[iid][0], item_map[iid][1])
+                for iid, s in substr
+                if iid in item_map
+            ]
+            logger.info("BM25 分块无结果，子串兜底: kb_id=%d hits=%d", kb_id, len(ranked))
+
+    if not ranked:
+        return []
+
+    meta = {
+        chunk.id: (chunk.doc_id, chunk.chunk_index, chunk.section_title)
+        for chunk, _ in rows
+    }
+    return [
+        (
+            chunk_id, meta[chunk_id][0], meta[chunk_id][1],
+            score, text, file_name, meta[chunk_id][2],
+        )
+        for chunk_id, score, text, file_name in ranked
+        if chunk_id in meta
+    ]
 
 
 def _bm25_search_docs(
@@ -91,15 +121,40 @@ def _bm25_search_docs(
     return scored[:top_k]
 
 
+def _should_apply_query_prompt() -> bool:
+    """判断当前 embedding 模型是否属于需要查询指令前缀的 bge 系。
+
+    V1.2.3：BAAI/bge-small-zh-v1.5 官方要求查询侧加"为这个句子生成表示以用于
+    检索相关文章："前缀以提升短查询/同义查询召回。仅查询侧加，文档侧（入库）
+    embedding 不加，故无需重索引。远程 text-embedding-3 等模型应排除。
+    """
+    prompt = (settings.EMBEDDING_QUERY_PROMPT or "").strip()
+    if not prompt:
+        return False
+    subs = [
+        s.strip().lower()
+        for s in (settings.EMBEDDING_QUERY_PROMPT_MODELS or "").split(",")
+        if s.strip()
+    ]
+    if not subs:
+        return False
+    model = (
+        settings.EMBEDDING_MODEL
+        if settings.EMBEDDING_API_URL
+        else settings.LOCAL_EMBEDDING_MODEL
+    ) or ""
+    return any(s and s in model.lower() for s in subs)
+
+
 def _vector_search(
     db: Session,
     kb_id: int,
     query: str,
     top_k: int = 10,
-) -> list[tuple[int, int, str, float, str | None]]:
+) -> list[tuple[int, int, str, float, str | None, str | None]]:
     """向量语义检索。
 
-    返回: list[(doc_id, chunk_index, content, similarity, file_name)]
+    返回: list[(doc_id, chunk_index, content, similarity, file_name, section_title)]
     """
     vs = VectorStore(db)
 
@@ -108,7 +163,10 @@ def _vector_search(
         return []
 
     try:
-        query_embedding = embedding_service.embed_one(query)
+        query_for_embedding = query
+        if _should_apply_query_prompt():
+            query_for_embedding = f"{settings.EMBEDDING_QUERY_PROMPT}{query}"
+        query_embedding = embedding_service.embed_one(query_for_embedding)
     except Exception as e:
         logger.warning("查询向量化失败，跳过向量检索: %s", e)
         return []
@@ -121,56 +179,67 @@ def _vector_search(
 
 
 def _rrf_fusion(
-    bm25_results: list[tuple[int, float, str, str | None]],
-    vector_results: list[tuple[int, int, str, float, str | None]],
+    bm25_results: list[tuple[int, int, int, float, str, str | None, str | None]],
+    vector_results: list[tuple[int, int, str, float, str | None, str | None]],
     k: int = 60,
     top_k: int = 10,
 ) -> list[dict]:
     """RRF (Reciprocal Rank Fusion) 融合 BM25 和向量检索结果。
 
-    返回: list[dict]，每个字典包含 doc_id, chunk_index, content, score, file_name
+    V1.2.3：BM25 分块与向量分块统一按 (doc_id, chunk_index) 作为块身份 key，
+    修复旧版两侧 key 不一致（BM25 用 chunk_id、向量用 doc_id/chunk_index）
+    导致同一块永远无法融合的 bug。
+
+    返回: list[dict]，每个字典包含 doc_id, chunk_index, content, score, file_name,
+    section_title（所属章节，重索引后回填）
     """
     bm25_weight = settings.HYBRID_BM25_WEIGHT
     vector_weight = settings.HYBRID_VECTOR_WEIGHT
 
-    # key: (doc_id, chunk_index, content)
-    fusion: dict[tuple[int, int, str], dict] = {}
+    # key: (doc_id, chunk_index)
+    fusion: dict[tuple[int, int], dict] = {}
 
     # BM25 贡献
-    for rank, (chunk_id, bm25_score, content, file_name) in enumerate(bm25_results):
+    for rank, (chunk_id, doc_id, chunk_index, bm25_score, content, file_name, section_title) in enumerate(bm25_results):
         rrf_score = bm25_weight / (k + rank + 1)
-        key = (chunk_id, -1, content)  # chunk_id from BM25, chunk_index=-1
+        key = (doc_id, chunk_index)
         if key not in fusion:
             fusion[key] = {
                 "chunk_id": chunk_id,
-                "chunk_index": -1,
+                "doc_id": doc_id,
+                "chunk_index": chunk_index,
                 "content": content,
                 "score": rrf_score,
                 "file_name": file_name,
                 "bm25_score": bm25_score,
                 "vector_score": 0.0,
+                "section_title": section_title,
             }
         else:
             fusion[key]["score"] += rrf_score
             fusion[key]["bm25_score"] = bm25_score
+            fusion[key]["section_title"] = section_title
 
     # 向量检索贡献
-    for rank, (doc_id, chunk_index, content, vec_score, file_name) in enumerate(vector_results):
+    for rank, (doc_id, chunk_index, content, vec_score, file_name, section_title) in enumerate(vector_results):
         rrf_score = vector_weight / (k + rank + 1)
-        key = (doc_id, chunk_index, content)
+        key = (doc_id, chunk_index)
         if key not in fusion:
             fusion[key] = {
-                "chunk_id": doc_id,
+                "chunk_id": None,
+                "doc_id": doc_id,
                 "chunk_index": chunk_index,
                 "content": content,
                 "score": rrf_score,
                 "file_name": file_name,
                 "bm25_score": 0.0,
                 "vector_score": vec_score,
+                "section_title": section_title,
             }
         else:
             fusion[key]["score"] += rrf_score
             fusion[key]["vector_score"] = vec_score
+            fusion[key]["section_title"] = section_title
 
     # 按融合分数排序
     merged = sorted(fusion.values(), key=lambda x: x["score"], reverse=True)
@@ -182,57 +251,138 @@ def hybrid_retrieve(
     kb_id: int,
     query: str,
     top_k: int = 5,
+    query_keywords: list[str] | None = None,
+    spec_codes: list[str] | None = None,
 ) -> list[dict]:
-    """向量检索主入口（V1.0.7 方案 A）。
+    """检索主入口（V1.2.3：默认 hybrid，保留 vector_only 兼容）。
 
     流程：
     1. 检查知识库是否有向量化分块
-    2. 无向量时抛异常，提示用户重新索引（不降级 BM25）
-    3. 执行向量语义检索，按余弦相似度排序
-    4. 截断、返回 top_k
+    2. 按 RETRIEVE_MODE 分支：
+       - hybrid（默认）：BM25 分块 + 向量语义检索 RRF 融合；
+         无向量时退化为 BM25 分块检索（不抛异常）。
+       - vector_only：纯向量，无向量时抛异常提示用户重新索引（V1.0.7 行为）。
+    3. 截断、返回 top_k
 
     返回: list[dict]，每个字典包含:
-        - doc_id / chunk_index / content / score / file_name
-        - bm25_score（纯向量模式下固定为 0.0）
-        - vector_score（余弦相似度）
+        - doc_id / chunk_index / content / score / file_name / chunk_id
+        - bm25_score（关键词分） / vector_score（余弦相似度）
     """
     query = query.strip()
     if not query:
         return []
 
-    # V1.0.7 方案 A：纯向量语义检索（不再调用 BM25）
+    # V1.2.3：向量检索始终使用原始 query（query_keywords/spec_codes 仅供 BM25 路径，
+    # 由上游从"原问题+改写词"分词得到，避免改写稀释向量信号）
     vs = VectorStore(db)
     has_vectors = vs.chunk_count(kb_id) > 0
 
-    if not has_vectors:
-        # 无向量化分块 = 向量检索不可用。方案 A 下不静默降级，抛异常让上游提示用户。
-        logger.warning("知识库 %d 无向量化分块，纯向量检索不可用", kb_id)
-        raise RuntimeError(
-            "当前知识库尚未生成向量索引，请先上传文档或点击「重新索引」。"
-            "（V1.0.7 纯向量模式：不再降级 BM25）"
-        )
+    if settings.RETRIEVE_MODE != "hybrid":
+        # ---- 纯向量模式（V1.0.7 方案 A）：完全保留原行为 ----
+        if not has_vectors:
+            logger.warning("知识库 %d 无向量化分块，纯向量检索不可用", kb_id)
+            raise RuntimeError(
+                "当前知识库尚未生成向量索引，请先上传文档或点击「重新索引」。"
+                "（纯向量模式：不再降级 BM25）"
+            )
 
-    vector_results = _vector_search(db, kb_id, query, top_k=top_k)
-    if not vector_results:
-        logger.info("向量检索返回空: query=%r kb_id=%d", query[:50], kb_id)
+        vector_results = _vector_search(db, kb_id, query, top_k=top_k)
+        if not vector_results:
+            logger.info("向量检索返回空: query=%r kb_id=%d", query[:50], kb_id)
+            return []
+
+        results = [
+            {
+                "doc_id": doc_id,
+                "chunk_index": chunk_index,
+                "content": content,
+                "score": float(similarity),
+                "file_name": file_name,
+                "bm25_score": 0.0,
+                "vector_score": float(similarity),
+                "section_title": section_title,
+            }
+            for doc_id, chunk_index, content, similarity, file_name, section_title in vector_results[:top_k]
+        ]
+        logger.info(
+            "纯向量检索完成: query=%r kb_id=%d vec=%d returned=%d",
+            query[:50], kb_id, len(vector_results), len(results),
+        )
+        return results
+
+    # ---- hybrid 模式（V1.2.3 默认）：BM25 分块 + 向量 RRF 融合 ----
+    kw = list(query_keywords) if query_keywords is not None else []
+    sc = list(spec_codes) if spec_codes is not None else []
+    if not kw and not sc:
+        from .text_utils import build_query_terms
+
+        kw, sc = build_query_terms(query)
+
+    if not has_vectors:
+        # hybrid 但知识库无向量索引：退化为 BM25 分块检索（不抛异常）
+        logger.warning("hybrid 模式无向量索引，退化为 BM25 分块检索: kb_id=%d", kb_id)
+        bm25_results = _bm25_search_chunks(db, kb_id, kw, sc, top_k=top_k)
+        return [
+            {
+                "doc_id": doc_id,
+                "chunk_index": chunk_index,
+                "content": content,
+                "score": float(score),
+                "file_name": file_name,
+                "bm25_score": float(score),
+                "vector_score": 0.0,
+                "section_title": section_title,
+            }
+            for _chunk_id, doc_id, chunk_index, score, content, file_name, section_title in bm25_results
+        ]
+
+    bm25_results = _bm25_search_chunks(db, kb_id, kw, sc, top_k=top_k * 3)
+    vector_results = _vector_search(db, kb_id, query, top_k=top_k * 3)
+
+    if not bm25_results and not vector_results:
+        logger.info("混合检索两侧均空: query=%r kb_id=%d", query[:50], kb_id)
         return []
 
-    # 向量检索结果直接作为最终结果（不再 RRF 融合）
-    results = [
-        {
-            "doc_id": doc_id,
-            "chunk_index": chunk_index,
-            "content": content,
-            "score": float(similarity),
-            "file_name": file_name,
-            "bm25_score": 0.0,
-            "vector_score": float(similarity),
-        }
-        for doc_id, chunk_index, content, similarity, file_name in vector_results[:top_k]
-    ]
+    if not vector_results:
+        # 仅 BM25 命中
+        results = [
+            {
+                "doc_id": doc_id,
+                "chunk_index": chunk_index,
+                "content": content,
+                "score": float(score),
+                "file_name": file_name,
+                "bm25_score": float(score),
+                "vector_score": 0.0,
+                "section_title": section_title,
+            }
+            for _chunk_id, doc_id, chunk_index, score, content, file_name, section_title in bm25_results[:top_k]
+        ]
+        logger.info("混合检索(仅BM25): query=%r kb_id=%d returned=%d", query[:50], kb_id, len(results))
+        return results
+
+    if not bm25_results:
+        # 仅向量命中
+        results = [
+            {
+                "doc_id": doc_id,
+                "chunk_index": chunk_index,
+                "content": content,
+                "score": float(similarity),
+                "file_name": file_name,
+                "bm25_score": 0.0,
+                "vector_score": float(similarity),
+                "section_title": section_title,
+            }
+            for doc_id, chunk_index, content, similarity, file_name, section_title in vector_results[:top_k]
+        ]
+        logger.info("混合检索(仅向量): query=%r kb_id=%d returned=%d", query[:50], kb_id, len(results))
+        return results
+
+    results = _rrf_fusion(bm25_results, vector_results, top_k=top_k)
     logger.info(
-        "纯向量检索完成: query=%r kb_id=%d vec=%d returned=%d",
-        query[:50], kb_id, len(vector_results), len(results),
+        "混合检索完成: query=%r kb_id=%d bm25=%d vec=%d returned=%d",
+        query[:50], kb_id, len(bm25_results), len(vector_results), len(results),
     )
     return results
 
@@ -254,8 +404,12 @@ def query_rewrite(query: str, llm_api_url: str, llm_api_key: str, model_name: st
     if not query.strip():
         return query
 
-    prompt = f"""你是一个工程规范领域的查询改写助手。将用户的自然语言问题改写为规范检索用的关键词，补充同义词、专业术语、规范编号，用空格分隔。
-只输出关键词，不要任何解释。
+    prompt = f"""你是一个工程规范领域的查询改写助手。请为下面的用户问题补充规范检索关键词。
+
+要求：
+1. 只输出需要补充的同义词、专业术语、规范编号，用空格分隔，不要任何解释和标点。
+2. 不要重复输入中已经出现的词；输入中的规范名称、表名、章节名、数字编号必须原样保留，不得改写或删除。
+3. 若输入已是精确术语（如表格名称「大变形分级标准表」、条款号），只输出少量补充术语即可。
 
 示例：
 输入：焊缝要查多少

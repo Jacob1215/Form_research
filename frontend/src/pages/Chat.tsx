@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import Header from '../components/Header'
 import MarkdownRenderer from '../components/MarkdownRenderer'
+import CopyButton from '../components/CopyButton'
 import { APP_NAME, APP_VERSION } from '../version'
 import {
   fetchKnowledgeBases,
@@ -292,11 +293,6 @@ export default function Chat() {
     sendMessage(userMsg.content)
   }
 
-  const handleCopy = (content: string) => {
-    if (!content) return
-    if (navigator.clipboard) navigator.clipboard.writeText(content).catch(() => {})
-  }
-
   const toggleVote = (id: string, vote: 'up' | 'down') => {
     setLiked((prev) => ({ ...prev, [id]: prev[id] === vote ? undefined : vote }))
   }
@@ -485,6 +481,7 @@ export default function Chat() {
                       </div>
                       <div className="message-meta user-meta">
                         <span className="message-time">{nowTime()}</span>
+                        <CopyButton text={msg.content} />
                       </div>
                     </div>
                     <div className="message-avatar user-avatar">
@@ -534,13 +531,7 @@ export default function Chat() {
                         <span className="message-time">{nowTime()}</span>
                         {msg.status !== 'thinking' && (
                           <div className="message-actions">
-                            <button className="action-btn" type="button" aria-label="复制" onClick={() => handleCopy(msg.content)}>
-                              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                                <rect width="14" height="14" x="8" y="8" rx="2" ry="2" />
-                                <path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2" />
-                              </svg>
-                              <span>复制</span>
-                            </button>
+                            <CopyButton text={msg.content} />
                             <button className="action-btn" type="button" aria-label="重新生成" onClick={() => handleRegenerate(msg)} disabled={streaming}>
                               <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                                 <path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8" />

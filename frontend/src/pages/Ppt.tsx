@@ -1,11 +1,9 @@
 /**
- * 报告总结编制页面（V1.1+）。
+ * PPT 制作页面（V1.2.1+）。
  *
- * 版本演进：
- * - V1.1：基础报告编制 — 上传图片/文档 + 多轮对话 + docx 导出 + 手动保存。
- * - V1.1.1：支持不选知识库（纯资料编制）；支持上传 docx/txt/md/pdf。
- * - V1.1.2：两阶段生成 — 对话框显示要点，完整报告可展开查看与导出。
- * - V1.1.3：skill 库选择 — 输入 / 触发技能菜单，选中后注入 system prompt。
+ * 以「报告总结」页面为模板：文本 + 附件文档（docx/txt/md/pdf） + 可选知识库 +
+ * skill（/ 菜单）→ 两阶段生成（对话框显示大纲，完整演示文稿用于展开查看与 pptx 导出）→
+ * 下载 .pptx；左侧保存已生成 PPT 的历史记录，可回看详情并重新下载。
  */
 import { useCallback, useEffect, useRef, useState } from 'react'
 import Header from '../components/Header'
@@ -14,14 +12,14 @@ import CopyButton from '../components/CopyButton'
 import { APP_NAME, APP_VERSION } from '../version'
 import {
   fetchKnowledgeBases,
-  streamReportChat,
+  streamPptChat,
   uploadReportFiles,
-  exportReportDocx,
-  saveReportRecord,
-  fetchReportRecords,
-  fetchReportRecord,
-  deleteReportRecord,
-  fetchReportSkills,
+  exportPptx,
+  savePptRecord,
+  fetchPptRecords,
+  fetchPptRecord,
+  deletePptRecord,
+  fetchPptSkills,
   type KnowledgeBase,
   type ReportMessage,
   type ReportDocRef,
@@ -38,18 +36,17 @@ interface Attachment {
   uploading?: boolean
 }
 
-interface ReportUiMessage {
+interface PptUiMessage {
   id: string
   role: 'user' | 'assistant'
   content: string
-  images?: string[]
   documents?: ReportDocRef[]
   status?: 'thinking' | 'streaming' | 'done' | 'error'
   error?: string
 }
 
 let idCounter = 0
-const nextId = () => `r${Date.now()}_${idCounter++}`
+const nextId = () => `p${Date.now()}_${idCounter++}`
 
 function formatTime(iso?: string): string {
   if (!iso) return ''
@@ -59,11 +56,11 @@ function formatTime(iso?: string): string {
 }
 
 function truncateTitle(t: string, max = 18): string {
-  if (!t) return '未命名报告'
+  if (!t) return '未命名PPT'
   return t.length > max ? t.slice(0, max) + '...' : t
 }
 
-export default function Report() {
+export default function Ppt() {
   /* ---------- 知识库 ---------- */
   const [kbs, setKbs] = useState<KnowledgeBase[]>([])
   const [kbLoading, setKbLoading] = useState(true)
@@ -72,26 +69,27 @@ export default function Report() {
 
   /* ---------- 编辑态 ---------- */
   const [title, setTitle] = useState('')
-  const [messages, setMessages] = useState<ReportUiMessage[]>([])
+  const [messages, setMessages] = useState<PptUiMessage[]>([])
   const [input, setInput] = useState('')
+  // V1.2.2：上传的参考文档（docx/txt/md/pdf）
   const [attachments, setAttachments] = useState<Attachment[]>([])
   const [streaming, setStreaming] = useState(false)
   const [exporting, setExporting] = useState(false)
   const [saving, setSaving] = useState(false)
   const [exportMsg, setExportMsg] = useState('')
   const [progress, setProgress] = useState('')
-  // V1.1.2：完整报告内容（对话框只显示要点，完整报告用于展开查看与 docx 导出）
-  const [fullReports, setFullReports] = useState<Record<string, string>>({})
-  const [expandedReports, setExpandedReports] = useState<Record<string, boolean>>({})
+  // 完整演示文稿内容（对话框只显示大纲，完整内容用于展开查看与 pptx 导出）
+  const [fullDecks, setFullDecks] = useState<Record<string, string>>({})
+  const [expandedDecks, setExpandedDecks] = useState<Record<string, boolean>>({})
 
-  // V1.1.3：skill 界面选择
+  // V1.2.1：skill 界面选择（与报告总结一致，scope: ppt）
   const [skillList, setSkillList] = useState<ReportSkillItem[]>([])
   const [selectedSkills, setSelectedSkills] = useState<string[]>([])
   const [skillMenuOpen, setSkillMenuOpen] = useState(false)
   const [skillQuery, setSkillQuery] = useState('')
   const [skillHighlight, setSkillHighlight] = useState(0)
 
-  /* ---------- 报告记录 ---------- */
+  /* ---------- PPT 记录 ---------- */
   const [records, setRecords] = useState<ReportRecordItem[]>([])
   const [recordsLoading, setRecordsLoading] = useState(false)
   const [currentRecord, setCurrentRecord] = useState<ReportRecordDetailItem | null>(null)
@@ -119,20 +117,20 @@ export default function Report() {
     return () => { cancelled = true }
   }, [])
 
-  /* ----- 加载 skill 清单 ----- */
+  /* ----- 加载 PPT skill 清单 ----- */
   useEffect(() => {
     let cancelled = false
-    fetchReportSkills()
+    fetchPptSkills()
       .then((res) => { if (!cancelled) setSkillList(res.items || []) })
       .catch((err: unknown) => { if (!cancelled) console.error(err) })
     return () => { cancelled = true }
   }, [])
 
-  /* ----- 加载报告记录 ----- */
+  /* ----- 加载 PPT 记录 ----- */
   const loadRecords = useCallback(async () => {
     setRecordsLoading(true)
     try {
-      const res = await fetchReportRecords()
+      const res = await fetchPptRecords()
       setRecords(res.items || [])
     } catch (err) { console.error(err) }
     finally { setRecordsLoading(false) }
@@ -183,25 +181,25 @@ export default function Report() {
     setDropdownOpen(false)
   }
 
-  /* ----- 新报告：清空编辑态并返回编辑视图 ----- */
-  const newReport = () => {
+  /* ----- 新 PPT：清空编辑态并返回编辑视图 ----- */
+  const newPpt = () => {
     setMessages([])
     setAttachments([])
     setInput('')
     setExportMsg('')
     setProgress('')
-    setFullReports({})
-    setExpandedReports({})
+    setFullDecks({})
+    setExpandedDecks({})
     setCurrentRecord(null)
     if (streamRef.current) { streamRef.current.abort(); streamRef.current = null }
     setStreaming(false)
   }
 
-  const updateMessage = (id: string, patch: Partial<ReportUiMessage>) => {
+  const updateMessage = (id: string, patch: Partial<PptUiMessage>) => {
     setMessages((prev) => prev.map((m) => (m.id === id ? { ...m, ...patch } : m)))
   }
 
-  /* ----- 上传图片/文档：选中即上传 ----- */
+  /* ----- 上传参考文档（docx/txt/md/pdf）：选中即上传 ----- */
   const handleFiles = async (files: FileList | null) => {
     if (!files || files.length === 0) return
     const list = Array.from(files)
@@ -230,25 +228,22 @@ export default function Report() {
     setAttachments((prev) => prev.filter((a) => a.url !== url))
   }
 
-  /* ----- 发送：历史 + 附件 → 流式编制报告 ----- */
+  /* ----- 发送：历史 + 附件文档 → 流式生成 PPT ----- */
   const sendMessage = useCallback((
     text: string,
-    opts?: { images?: string[]; documents?: ReportDocRef[]; baseHistory?: ReportUiMessage[] },
+    opts?: { documents?: ReportDocRef[]; baseHistory?: PptUiMessage[] },
   ) => {
     const trimmed = text.trim()
-    const imgUrls = opts?.images ?? attachments
-      .filter((a) => a.url && !a.uploading && a.kind !== 'doc').map((a) => a.url)
     const docRefs = opts?.documents ?? attachments
       .filter((a) => a.url && !a.uploading && a.kind === 'doc')
       .map((a) => ({ url: a.url, name: a.name }))
-    if ((!trimmed && imgUrls.length === 0 && docRefs.length === 0) || streaming) return
+    if ((!trimmed && docRefs.length === 0) || streaming) return
 
-    const userMsg: ReportUiMessage = {
+    const userMsg: PptUiMessage = {
       id: nextId(), role: 'user', content: trimmed, status: 'done',
-      images: imgUrls.length ? imgUrls : undefined,
       documents: docRefs.length ? docRefs : undefined,
     }
-    const aiMsg: ReportUiMessage = { id: nextId(), role: 'assistant', content: '', status: 'thinking' }
+    const aiMsg: PptUiMessage = { id: nextId(), role: 'assistant', content: '', status: 'thinking' }
     const base = opts?.baseHistory ?? messages
     setMessages([...base, userMsg, aiMsg])
     setInput('')
@@ -259,18 +254,18 @@ export default function Report() {
 
     const aiId = aiMsg.id
     const history: ReportMessage[] = [...base, userMsg].map((m) => ({
-      role: m.role, content: m.content, images: m.images, documents: m.documents,
+      role: m.role, content: m.content, documents: m.documents,
     }))
 
     let firstToken = true
-    streamRef.current = streamReportChat({
+    streamRef.current = streamPptChat({
       kb_id: selectedKb?.id ?? null,
       title: title.trim() || undefined,
       messages: history,
       skills: selectedSkills,
       onProgress: (msg) => setProgress(msg),
-      onReport: (content) => {
-        setFullReports((prev) => ({ ...prev, [aiId]: content }))
+      onPpt: (content) => {
+        setFullDecks((prev) => ({ ...prev, [aiId]: content }))
         setProgress('')
       },
       onToken: (content) => {
@@ -305,7 +300,7 @@ export default function Report() {
 
   const handleSend = () => { sendMessage(input) }
 
-  /* ----- V1.1.3 skill 菜单 ----- */
+  /* ----- skill 菜单（与报告总结一致） ----- */
   const filteredSkills = skillList.filter((s) =>
     (s.name || '').toLowerCase().includes(skillQuery.toLowerCase()),
   )
@@ -377,25 +372,21 @@ export default function Report() {
     }
   }
 
-  /* ----- 重新生成：复用上一条用户输入（含图片/文档）重发 ----- */
-  const handleRegenerate = (aiMsg: ReportUiMessage) => {
+  /* ----- 重新生成：复用上一条用户输入（含附件文档）重发 ----- */
+  const handleRegenerate = (aiMsg: PptUiMessage) => {
     if (streaming) return
     const idx = messages.findIndex((m) => m.id === aiMsg.id)
     if (idx <= 0) return
     const userMsg = messages[idx - 1]
     if (!userMsg || userMsg.role !== 'user') return
     const base = messages.filter((m) => m.id !== aiMsg.id)
-    sendMessage(userMsg.content, {
-      images: userMsg.images,
-      documents: userMsg.documents,
-      baseHistory: base,
-    })
+    sendMessage(userMsg.content, { documents: userMsg.documents, baseHistory: base })
   }
 
-  /* ----- 下载 docx ----- */
+  /* ----- 下载 pptx ----- */
   const lastAssistant = [...messages].reverse().find((m) => m.role === 'assistant' && m.content.trim())
-  // V1.1.2：下载/保存用完整报告（对话框只显示要点）
-  const lastFull = lastAssistant ? fullReports[lastAssistant.id] : undefined
+  // 下载/保存用完整演示文稿（对话框只显示大纲）
+  const lastFull = lastAssistant ? fullDecks[lastAssistant.id] : undefined
   const canDownload = !!lastFull && !exporting && !streaming
 
   const downloadContent = async (dlTitle: string, content: string) => {
@@ -403,16 +394,16 @@ export default function Report() {
     setExporting(true)
     setExportMsg('')
     try {
-      const blob = await exportReportDocx(dlTitle, content)
+      const blob = await exportPptx(dlTitle, content)
       const url = URL.createObjectURL(blob)
       const a = document.createElement('a')
       a.href = url
-      a.download = `${dlTitle}.docx`
+      a.download = `${dlTitle}.pptx`
       document.body.appendChild(a)
       a.click()
       a.remove()
       setTimeout(() => URL.revokeObjectURL(url), 3000)
-      setExportMsg('docx 已生成并开始下载')
+      setExportMsg('pptx 已生成并开始下载')
     } catch (err) {
       setExportMsg(`导出失败：${err instanceof Error ? err.message : '未知错误'}`)
     } finally {
@@ -420,18 +411,18 @@ export default function Report() {
     }
   }
 
-  /* ----- 手动保存报告记录 ----- */
-  const saveCurrentReport = async () => {
+  /* ----- 手动保存 PPT 记录 ----- */
+  const saveCurrentPpt = async () => {
     if (!lastFull || saving) return
     setSaving(true)
     setExportMsg('')
-    // V1.1.4：记录最后一条非空用户提问，供历史记录展示与复制
+    // 记录最后一条非空用户提问，供历史记录展示与复制
     const lastUserQuestion = [...messages].reverse().find(
       (m) => m.role === 'user' && !!m.content && m.content.trim().length > 0,
     )?.content
     try {
-      await saveReportRecord(title.trim() || '报告总结', lastFull, lastUserQuestion)
-      setExportMsg('已保存到左侧报告列表')
+      await savePptRecord(title.trim() || 'PPT', lastFull, lastUserQuestion)
+      setExportMsg('已保存到左侧PPT列表')
       loadRecords()
     } catch (err) {
       setExportMsg(`保存失败：${err instanceof Error ? err.message : '未知错误'}`)
@@ -442,7 +433,7 @@ export default function Report() {
 
   const openRecord = async (id: string) => {
     try {
-      const rec = await fetchReportRecord(id)
+      const rec = await fetchPptRecord(id)
       setCurrentRecord(rec)
     } catch (err) {
       setExportMsg(`加载记录失败：${err instanceof Error ? err.message : '未知错误'}`)
@@ -451,9 +442,9 @@ export default function Report() {
 
   const deleteCurrentRecord = async () => {
     if (!currentRecord) return
-    if (!window.confirm('确认删除该报告记录？')) return
+    if (!window.confirm('确认删除该PPT记录？')) return
     try {
-      await deleteReportRecord(currentRecord.id)
+      await deletePptRecord(currentRecord.id)
       setCurrentRecord(null)
       loadRecords()
     } catch (err) {
@@ -465,24 +456,24 @@ export default function Report() {
 
   return (
     <>
-      <Header activeNav="report" />
+      <Header activeNav="ppt" />
 
       <main className="chat-main">
-        {/* ===== 左侧报告记录侧栏 ===== */}
+        {/* ===== 左侧 PPT 记录侧栏 ===== */}
         <aside className="chat-sidebar">
           <div className="sidebar-header">
-            <button className="new-conv-btn" onClick={newReport}>
+            <button className="new-conv-btn" onClick={newPpt}>
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                 <line x1="12" y1="5" x2="12" y2="19" />
                 <line x1="5" y1="12" x2="19" y2="12" />
               </svg>
-              <span>新报告</span>
+              <span>新PPT</span>
             </button>
           </div>
           <div className="sidebar-list">
             {recordsLoading && <div className="sidebar-empty">加载中...</div>}
             {!recordsLoading && records.length === 0 && (
-              <div className="sidebar-empty">暂无已保存的报告<br />编制完成后点「保存报告」</div>
+              <div className="sidebar-empty">暂无已保存的PPT<br />制作完成后点「保存PPT」</div>
             )}
             {records.map((rec) => (
               <button
@@ -512,7 +503,7 @@ export default function Report() {
                   <span className="report-record-head-title">{truncateTitle(currentRecord.title, 40)}</span>
                 </div>
                 <div className="topbar-status">
-                  <button className="report-new-btn" type="button" onClick={newReport}>返回编辑</button>
+                  <button className="report-new-btn" type="button" onClick={newPpt}>返回编辑</button>
                   <button className="report-delete-btn" type="button" onClick={deleteCurrentRecord}>删除</button>
                   <button
                     className="report-download-btn"
@@ -525,7 +516,7 @@ export default function Report() {
                       <polyline points="7 10 12 15 17 10" />
                       <line x1="12" x2="12" y1="15" y2="3" />
                     </svg>
-                    <span>{exporting ? '导出中...' : '下载docx'}</span>
+                    <span>{exporting ? '导出中...' : '下载pptx'}</span>
                   </button>
                 </div>
               </div>
@@ -589,7 +580,7 @@ export default function Report() {
                         </span>
                         <span className="kb-option-body">
                           <span className="kb-option-name">不选择知识库</span>
-                          <span className="kb-option-desc">仅基于输入资料编制报告</span>
+                          <span className="kb-option-desc">仅基于输入文本制作PPT</span>
                         </span>
                         {selectedKb === null && (
                           <span className="kb-check">
@@ -640,7 +631,7 @@ export default function Report() {
 
                 <input
                   className="report-title-input"
-                  placeholder="请输入报告标题（用于 docx 文件名与首页标题）"
+                  placeholder="请输入 PPT 标题（用于封面与文件名）"
                   value={title}
                   onChange={(e) => setTitle(e.target.value)}
                 />
@@ -650,28 +641,28 @@ export default function Report() {
                     className="report-save-btn"
                     type="button"
                     disabled={!lastFull || saving || streaming}
-                    onClick={saveCurrentReport}
+                    onClick={saveCurrentPpt}
                   >
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                       <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z" />
                       <polyline points="17 21 17 13 7 13 7 21" />
                       <polyline points="7 3 7 8 15 8" />
                     </svg>
-                    <span>{saving ? '保存中...' : '保存报告'}</span>
+                    <span>{saving ? '保存中...' : '保存PPT'}</span>
                   </button>
-                  <button className="report-new-btn" type="button" onClick={newReport} disabled={streaming}>新报告</button>
+                  <button className="report-new-btn" type="button" onClick={newPpt} disabled={streaming}>新PPT</button>
                   <button
                     className="report-download-btn"
                     type="button"
                     disabled={!canDownload}
-                    onClick={() => lastFull && downloadContent(title.trim() || '报告总结', lastFull)}
+                    onClick={() => lastFull && downloadContent(title.trim() || 'PPT演示', lastFull)}
                   >
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                       <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
                       <polyline points="7 10 12 15 17 10" />
                       <line x1="12" x2="12" y1="15" y2="3" />
                     </svg>
-                    <span>{exporting ? '导出中...' : '下载docx'}</span>
+                    <span>{exporting ? '导出中...' : '下载pptx'}</span>
                   </button>
                 </div>
               </div>
@@ -683,17 +674,14 @@ export default function Report() {
                     <div className="welcome-bubble">
                       <div className="welcome-avatar">
                         <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                          <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-                          <polyline points="14 2 14 8 20 8" />
-                          <line x1="16" x2="8" y1="13" y2="13" />
-                          <line x1="16" x2="8" y1="17" y2="17" />
-                          <polyline points="10 9 9 9 8 9" />
+                          <path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z" />
+                          <path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z" />
                         </svg>
                       </div>
                       <div className="welcome-text">
                         {selectedKb
-                          ? `你好！我是${APP_NAME} ${APP_VERSION} 报告编制助手。请在下方输入报告、参考资料（可上传图片/文档），点击发送后，我会结合知识库「${selectedKb.name}」编制总结报告。`
-                          : `你好！我是${APP_NAME} ${APP_VERSION} 报告编制助手。当前未选择知识库，将仅基于您输入的资料编制报告。请输入资料（可上传图片/docx/txt/md/pdf）。`}
+                          ? `你好！我是${APP_NAME} ${APP_VERSION} PPT 制作助手。请在下方输入要制作 PPT 的文本，点击发送后，我会结合知识库「${selectedKb.name}」总结并生成可下载的 PPT。`
+                          : `你好！我是${APP_NAME} ${APP_VERSION} PPT 制作助手。当前未选择知识库，将仅基于您输入的文本制作 PPT。请输入内容，输入 / 选择技能。`}
                       </div>
                     </div>
                   )}
@@ -704,13 +692,6 @@ export default function Report() {
                         <div className="message-content">
                           <div className="bubble user-bubble">
                             {msg.content && <p>{msg.content}</p>}
-                            {msg.images && msg.images.length > 0 && (
-                              <div className="report-msg-images">
-                                {msg.images.map((url) => (
-                                  <img key={url} src={url} alt="" loading="lazy" />
-                                ))}
-                              </div>
-                            )}
                             {msg.documents && msg.documents.length > 0 && (
                               <div className="report-msg-docs">
                                 {msg.documents.map((doc) => (
@@ -742,8 +723,8 @@ export default function Report() {
                       <div className="message-row ai" key={msg.id}>
                         <div className="message-avatar ai-avatar">
                           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-                            <polyline points="14 2 14 8 20 8" />
+                            <path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z" />
+                            <path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z" />
                           </svg>
                         </div>
                         <div className="message-content">
@@ -752,13 +733,13 @@ export default function Report() {
                               <div className="ai-answer">
                                 <span className="typing-dots"><span /><span /><span /></span>
                                 <span style={{ fontSize: '13px', color: 'var(--qa-muted-foreground)' }}>
-                                  {progress || '正在结合资料编制报告...'}
+                                  {progress || '正在总结并制作PPT...'}
                                 </span>
                               </div>
                             ) : (
                               <div className="ai-answer">
                                 {msg.content ? (
-                                  // 对话框只显示要点；完整报告见下方「查看完整报告」
+                                  // 对话框只显示大纲；完整演示文稿见下方「查看完整PPT」
                                   <MarkdownRenderer markdown={msg.content} />
                                 ) : (
                                   <span style={{ color: 'var(--qa-muted-foreground)' }}>（无内容）</span>
@@ -771,24 +752,24 @@ export default function Report() {
                             {progress && msg.status === 'streaming' && (
                               <div className="report-progress-hint">⏳ {progress}</div>
                             )}
-                            {fullReports[msg.id] && (
+                            {fullDecks[msg.id] && (
                               <div className="report-full-toggle">
                                 <button
                                   className="report-full-btn"
                                   type="button"
                                   onClick={() =>
-                                    setExpandedReports((prev) => ({ ...prev, [msg.id]: !prev[msg.id] }))
+                                    setExpandedDecks((prev) => ({ ...prev, [msg.id]: !prev[msg.id] }))
                                   }
                                 >
                                   <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                                     <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
                                     <polyline points="14 2 14 8 20 8" />
                                   </svg>
-                                  <span>{expandedReports[msg.id] ? '收起完整报告' : '查看完整报告'}</span>
+                                  <span>{expandedDecks[msg.id] ? '收起完整PPT' : '查看完整PPT'}</span>
                                 </button>
-                                {expandedReports[msg.id] && (
+                                {expandedDecks[msg.id] && (
                                   <div className="report-full-content">
-                                    <MarkdownRenderer markdown={fullReports[msg.id]} />
+                                    <MarkdownRenderer markdown={fullDecks[msg.id]} />
                                   </div>
                                 )}
                               </div>
@@ -823,13 +804,14 @@ export default function Report() {
       {!currentRecord && (
         <div className="chat-input-bar">
           <div className="input-column">
+            {/* V1.2.2：已上传文档 */}
             {attachments.length > 0 && (
               <div className="report-attach-list">
                 {attachments.map((att) => (
                   <div className="report-attach-item" key={att.url || att.name}>
                     {att.uploading ? (
                       <span className="report-attach-thumb report-attach-loading">上传中…</span>
-                    ) : att.kind === 'doc' ? (
+                    ) : (
                       <div className="report-attach-doc">
                         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                           <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
@@ -837,8 +819,6 @@ export default function Report() {
                         </svg>
                         <span>{att.name}</span>
                       </div>
-                    ) : (
-                      <img className="report-attach-thumb" src={att.url} alt={att.name} />
                     )}
                     <button className="report-attach-remove" type="button" aria-label="删除附件" onClick={() => removeAttachment(att.url)}>
                       ×
@@ -848,7 +828,7 @@ export default function Report() {
               </div>
             )}
 
-            {/* V1.1.3：已选 skill chips */}
+            {/* 已选 skill chips */}
             {selectedSkills.length > 0 && (
               <div className="report-skill-chips">
                 {selectedSkills.map((name) => (
@@ -882,12 +862,12 @@ export default function Report() {
               <input
                 ref={fileInputRef}
                 type="file"
-                accept="image/*,.docx,.txt,.md,.pdf"
+                accept=".docx,.txt,.md,.pdf"
                 multiple
                 hidden
                 onChange={(e) => { handleFiles(e.target.files); e.target.value = '' }}
               />
-              <button className="attach-btn" type="button" aria-label="上传图片或文档" onClick={() => fileInputRef.current?.click()} disabled={streaming}>
+              <button className="attach-btn" type="button" aria-label="上传文档" onClick={() => fileInputRef.current?.click()} disabled={streaming}>
                 <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                   <path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 17.93 8.8l-8.57 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48" />
                 </svg>
@@ -899,7 +879,7 @@ export default function Report() {
               </button>
               <textarea
                 className="chat-textarea"
-                placeholder={selectedKb ? '输入报告、参考资料（可上传图片/文档），输入 / 选择技能，Enter发送，Shift+Enter换行...' : '未选择知识库，仅凭输入资料编制。请输入内容或上传文档，输入 / 选择技能...'}
+                placeholder={selectedKb ? '输入要制作 PPT 的文本，可上传 docx/txt/md/pdf 作为素材，输入 / 选择技能，Enter发送...' : '未选择知识库，仅凭输入文本制作 PPT。可上传 docx/txt/md/pdf，输入 / 选择技能...'}
                 rows={1}
                 ref={textareaRef}
                 value={input}
@@ -916,7 +896,7 @@ export default function Report() {
             </div>
 
             <div className="input-hint">
-              支持图片 / docx / txt / md / pdf
+              支持 docx / txt / md / pdf
               {exportMsg ? ` · ${exportMsg}` : ''}
             </div>
           </div>
