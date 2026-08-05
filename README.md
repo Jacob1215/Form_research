@@ -219,11 +219,16 @@ docker compose logs -f app
 | `EMBEDDING_DEVICE` | 可选 | `cpu` | 推理设备（cpu/cuda） |
 | `ENABLE_QUERY_REWRITE` | 可选 | `true` | 是否开启 LLM 查询改写 |
 | `RETRIEVE_MODE` | 可选 | `hybrid` | 检索模式：`hybrid`（默认）/ `vector_only` / `bm25_fallback` |
-| `HYBRID_BM25_WEIGHT` | 可选 | `0.5` | RRF 融合中 BM25 权重（仅 hybrid 模式生效） |
-| `HYBRID_VECTOR_WEIGHT` | 可选 | `0.5` | RRF 融合中向量检索权重（仅 hybrid 模式生效） |
+| `HYBRID_BM25_WEIGHT` | 可选 | `0.35` | RRF 融合中 BM25 权重（仅 hybrid 模式生效，V1.2.5 起语义偏重） |
+| `HYBRID_VECTOR_WEIGHT` | 可选 | `0.65` | RRF 融合中向量检索权重（仅 hybrid 模式生效，V1.2.5 起语义偏重） |
 | `EMBEDDING_QUERY_PROMPT` | 可选 | `为这个句子生成表示以用于检索相关文章：` | BGE 查询指令前缀（仅查询侧，V1.2.3） |
 | `DOC_TEXT_CAP` | 可选 | `500000` | 单文档入库文本上限（字符，V1.2.3） |
 | `CHUNK_MAX_COUNT` | 可选 | `1500` | 单文档最大分块数（V1.2.3） |
+| `RAG_TOP_K` | 可选 | `8` | chat/report/ppt 检索返回分块数（V1.2.4） |
+| `VECTOR_SCORE_THRESHOLD` | 可选 | `0.2` | 向量相似度阈值（V1.2.4，放宽提升字面表名召回） |
+| `ENABLE_SUBSTRING_BOOST` | 可选 | `true` | 字面命中增强：子串 + 整句精确命中并入 BM25 候选池（V1.2.4） |
+| `SUBSTRING_PHRASE_WEIGHT` | 可选 | `5.0` | 原始整句精确命中的权重乘数（V1.2.4） |
+| `ENABLE_LITERAL_FORCE_INJECT` | 可选 | `false` | 融合后字面命中强制回插（V1.2.4，默认关） |
 | `CORS_ORIGINS` | 可选 | `*` | CORS 允许来源 |
 
 ## 📊 架构详解
@@ -239,7 +244,7 @@ docker compose logs -f app
 ```
 
 1. **查询改写**：LLM 将口语化查询扩展为工程规范专业术语（如"焊缝探伤"→"焊缝探伤比例 超声波探伤 射线探伤 焊缝质量"），改写词只喂关键词路径
-2. **混合检索**（V1.2.3 默认）：BM25 分块关键词 + pgvector 余弦相似度 RRF 融合，召回 Top-5 相关分块；向量侧用原始提问（BGE 查询指令前缀）
+2. **混合检索**（V1.2.3 默认）：BM25 分块关键词 + pgvector 余弦相似度 RRF 融合，召回 `RAG_TOP_K`（V1.2.4 起默认 8）个相关分块；向量侧用原始提问（BGE 查询指令前缀）。V1.2.4 起 BM25 路径把「原始整句」精确命中并入候选池（对齐预览搜索），「大变形分级标准表」这类字面表名/条款号查询更稳；字面命中块的 `bm25_score` 可能为子串/整句得分，仅供展示与调参。V1.2.5 起 RRF 默认**语义偏重**（BM25 0.35 / 向量 0.65）降低关键字重复块刷榜，分词级子串仅作召回补漏、整句字面命中才提权
 3. **图片提取**：从检索分块中提取 Markdown 图片引用，重写为后端可访问 URL
 4. **上下文构建**：系统提示词 + 检索片段 + 用户问题 + 相关图片
 5. **流式生成**：LLM 实时流式返回回答

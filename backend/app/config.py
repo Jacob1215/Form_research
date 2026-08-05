@@ -6,7 +6,15 @@ logger = logging.getLogger("app.config")
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env", extra="ignore", case_sensitive=False)
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        extra="ignore",
+        case_sensitive=False,
+        # V1.2.5：空值 env 视为未设置 → 默认值单一来源在 config.py。
+        # docker-compose 只做 ${VAR:-} 纯透传，.env 没配的键落回本类默认值，
+        # 避免 int/float/bool 字段被空串校验炸掉。
+        env_ignore_empty=True,
+    )
 
     # 数据库连接
     DATABASE_URL: str = "postgresql://app:app@db:5432/qa"
@@ -32,10 +40,12 @@ class Settings(BaseSettings):
     # V1.2.3 检索模式：hybrid（BM25+向量 RRF 融合，默认）/ vector_only（纯向量）/ bm25_fallback（纯 BM25）
     # V1.0.7 曾默认 vector_only，导致"分级标准表"这类精确表名查询难命中，故 V1.2.3 切回混合。
     RETRIEVE_MODE: str = "hybrid"
-    # V1.2.3：均衡 RRF 权重（0.5/0.5）。旧值 0.3/0.7 会让 BM25 最大贡献 0.3/61≈0.0049
-    # 低于向量第 15 名 0.7/76≈0.0092，导致 BM25 字面命中的块永远进不了 top-5（bm25_score 恒为 0）。
-    HYBRID_BM25_WEIGHT: float = 0.5
-    HYBRID_VECTOR_WEIGHT: float = 0.5
+    # V1.2.5：RRF 权重默认语义偏重（0.35/0.65），降低 BM25 关键字重复块的刷榜影响。
+    # V1.2.3 曾因 0.3/0.7 让 BM25 第 1 名贡献 0.3/61≈0.0049 低于向量第 15 名 0.7/76≈0.0092，
+    # 导致纯字面命中块永远进不了 top-5；现回归语义偏重是权衡结果，精确字面命中
+    # 靠整句提权（SUBSTRING_PHRASE_WEIGHT）兜底。可 .env 回退 0.4/0.6 或 0.5/0.5。
+    HYBRID_BM25_WEIGHT: float = 0.35
+    HYBRID_VECTOR_WEIGHT: float = 0.65
 
     # V1.2.3：BGE 查询指令（仅查询侧加前缀，文档侧不加，无需重索引）
     # BAAI/bge-small-zh-v1.5 官方要求查询侧加此前缀以提升短查询/同义查询召回；
@@ -44,6 +54,18 @@ class Settings(BaseSettings):
     # 命中这些模型名子串才应用查询指令（逗号分隔，大小写不敏感）；
     # 仅 bge 系需要，远程 text-embedding-3 等模型应排除。
     EMBEDDING_QUERY_PROMPT_MODELS: str = "bge"
+
+    # ---------- V1.2.4：对话检索召回率调优 ----------
+    # 各检索调用方默认 top_k（chat/report/ppt 之前硬编码 5；8 块约 5k 字符注入 LLM）
+    RAG_TOP_K: int = 8
+    # 向量相似度阈值（原 vector_store 默认 0.3；放宽提升精确表名/条款号召回）
+    VECTOR_SCORE_THRESHOLD: float = 0.2
+    # 子串/字面命中增强总开关：分词级子串仅补漏、整句字面命中才提权并入 BM25 候选池
+    ENABLE_SUBSTRING_BOOST: bool = True
+    # 原始整句精确命中的权重乘数（对齐预览整串子串高亮）；0 = 不提升整句
+    SUBSTRING_PHRASE_WEIGHT: float = 5.0
+    # 融合后字面命中强制回插开关（默认关；仅当验证后仍有具体查询漏掉字面块时打开）
+    ENABLE_LITERAL_FORCE_INJECT: bool = False
 
     # 上传文件目录
     UPLOAD_DIR: str = "/app/uploads"

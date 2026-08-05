@@ -139,7 +139,7 @@ def _stream_ppt(req: PptChatRequest):
         context_block = ""
         if req.kb_id is not None and query:
             try:
-                results = retrieve_with_hybrid(db, req.kb_id, query, top_k=5)
+                results = retrieve_with_hybrid(db, req.kb_id, query, top_k=settings.RAG_TOP_K)
                 context_block = _build_structured_context(results, query)
             except Exception as e:  # noqa: BLE001
                 logger.warning("PPT 知识库检索失败，降级为纯文本编制: %s", e)

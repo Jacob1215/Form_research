@@ -13,3 +13,7 @@ uploads
 .env.local
 pages
 *.md
+mineru_api
+# 排除所有 wheel，但保留 backend/torch-*.whl（Dockerfile P0 用它装 CPU torch）
+**/*.whl
+!backend/torch-*.whl

@@ -489,7 +489,7 @@ def _stream_report(req: ReportChatRequest):
         context_block = ""
         if req.kb_id is not None and query:
             try:
-                results = retrieve_with_hybrid(db, req.kb_id, query, top_k=5)
+                results = retrieve_with_hybrid(db, req.kb_id, query, top_k=settings.RAG_TOP_K)
                 context_block = _build_structured_context(results, query)
             except Exception as e:  # noqa: BLE001
                 logger.warning("报告知识库检索失败，降级为纯资料编制: %s", e)

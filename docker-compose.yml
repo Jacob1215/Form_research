@@ -11,22 +11,29 @@ services:
     volumes:
       - ./uploads:/app/uploads        # 原始文档持久化（共享宿主机目录）
     environment:
-      - DATABASE_URL=postgresql://app:app@db:5432/qa
+      # 全部纯透传（${VAR:-}）；默认值单一来源 = backend/app/config.py
+      # （config.py 已设 env_ignore_empty=True，.env 未配的键落回 config 默认值）
+      - DATABASE_URL=${DATABASE_URL:-}
       - LLM_ENCRYPT_KEY=${LLM_ENCRYPT_KEY:-}
       - MINERU_API_URL=${MINERU_API_URL:-}
       - EMBEDDING_API_URL=${EMBEDDING_API_URL:-}
       - EMBEDDING_API_KEY=${EMBEDDING_API_KEY:-}
       - EMBEDDING_MODEL=${EMBEDDING_MODEL:-}
-      - EMBEDDING_DIM=${EMBEDDING_DIM:-512}
-      - EMBEDDING_USE_LOCAL=${EMBEDDING_USE_LOCAL:-true}
-      - EMBEDDING_DEVICE=${EMBEDDING_DEVICE:-cpu}
-      - LOCAL_EMBEDDING_MODEL=${LOCAL_EMBEDDING_MODEL:-BAAI/bge-small-zh-v1.5}
-      - ENABLE_QUERY_REWRITE=${ENABLE_QUERY_REWRITE:-true}
-      - ENABLE_RERANK=${ENABLE_RERANK:-false}
-      - RETRIEVE_MODE=${RETRIEVE_MODE:-hybrid}   # V1.2.3 默认混合检索
-      - HYBRID_BM25_WEIGHT=${HYBRID_BM25_WEIGHT:-0.5}   # V1.2.3 均衡权重，让 BM25 命中进 top-5
-      - HYBRID_VECTOR_WEIGHT=${HYBRID_VECTOR_WEIGHT:-0.5}
-      - CORS_ORIGINS=${CORS_ORIGINS:-*}
+      - EMBEDDING_DIM=${EMBEDDING_DIM:-}
+      - EMBEDDING_USE_LOCAL=${EMBEDDING_USE_LOCAL:-}
+      - EMBEDDING_DEVICE=${EMBEDDING_DEVICE:-}
+      - LOCAL_EMBEDDING_MODEL=${LOCAL_EMBEDDING_MODEL:-}
+      - ENABLE_QUERY_REWRITE=${ENABLE_QUERY_REWRITE:-}
+      - ENABLE_RERANK=${ENABLE_RERANK:-}
+      - RETRIEVE_MODE=${RETRIEVE_MODE:-}
+      - HYBRID_BM25_WEIGHT=${HYBRID_BM25_WEIGHT:-}
+      - HYBRID_VECTOR_WEIGHT=${HYBRID_VECTOR_WEIGHT:-}
+      - RAG_TOP_K=${RAG_TOP_K:-}
+      - VECTOR_SCORE_THRESHOLD=${VECTOR_SCORE_THRESHOLD:-}
+      - ENABLE_SUBSTRING_BOOST=${ENABLE_SUBSTRING_BOOST:-}
+      - SUBSTRING_PHRASE_WEIGHT=${SUBSTRING_PHRASE_WEIGHT:-}
+      - ENABLE_LITERAL_FORCE_INJECT=${ENABLE_LITERAL_FORCE_INJECT:-}
+      - CORS_ORIGINS=${CORS_ORIGINS:-}
     depends_on:
       db:
         condition: service_healthy

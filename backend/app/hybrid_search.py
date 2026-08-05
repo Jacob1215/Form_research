@@ -23,10 +23,74 @@ from .embedding_service import embedding_service
 from .vector_store import VectorStore
 from .text_utils import (
     bm25_rank,
+    strip_markdown,
     substring_rank,
 )
 
 logger = logging.getLogger("app.hybrid_search")
+
+
+def _merge_bm25_pool(
+    items: list[tuple[int, str, str]],
+    ranked: list[tuple[int, float, str, str]],
+    query_keywords: list[str],
+    spec_codes: list[str],
+    top_k: int,
+    raw_query: str | None,
+) -> list[tuple[int, float, str, str]]:
+    """并行合并 BM25 + 分词级子串补漏 + 整句字面命中提权，构成 BM25 候选池。
+
+    V1.2.5：分词级子串只做**召回补漏**（把 bm25 未命中的字面块加入池子），
+    不再覆盖/抬高已由 bm25 打分的块，避免关键字重复块以纯子串频次刷榜；
+    只有「原始整句」连续出现才强提权（对齐预览界面的 RegExp 子串高亮行为）。
+    最终按 score 降序取 top_k。
+
+    Args:
+        items: [(chunk_id, content, file_name), ...]
+        ranked: bm25_rank 结果 [(chunk_id, score, text, file_name), ...]
+        query_keywords: 分词关键词
+        spec_codes: 规范编号
+        top_k: 返回条数
+        raw_query: 原始查询整句（预览搜索框同一输入），用于字面命中扫描
+
+    Returns:
+        [(chunk_id, score, text, file_name)]，按 score 降序，仅保留 score > 0。
+        注意：字面命中块的 score 可能为子串/整句得分（bm25_score 语义放宽，
+        仅供展示与调参）。
+    """
+    item_map = {iid: (text, fname) for iid, text, fname in items}
+    pool: dict[int, float] = {iid: score for iid, score, _t, _f in ranked}
+
+    if settings.ENABLE_SUBSTRING_BOOST:
+        # ① 分词级子串：仅作为召回补漏——把 bm25 漏掉的字面命中块加入候选池
+        #    （保留 V1.2.4 对"精确表名块进不了池"的修复），但不再覆盖/抬高
+        #    已由 bm25 打分的块，避免关键字重复块以纯子串频次刷榜。
+        for iid, s in substring_rank(items, query_keywords, spec_codes, top_k=top_k):
+            if iid not in pool:
+                pool[iid] = s
+
+        # ② 整句字面命中：全块扫描原始整句连续出现即强提权（对齐预览）。
+        # 独立于 top_k 扫描全部块，不受 substring_rank 截断影响。
+        phrase = strip_markdown((raw_query or "").strip().lower())
+        if phrase:
+            for iid, text, _f in items:
+                hits = strip_markdown((text or "").lower()).count(phrase)
+                if hits > 0:
+                    pool[iid] = max(
+                        pool.get(iid, 0.0),
+                        settings.SUBSTRING_PHRASE_WEIGHT * hits,
+                    )
+
+    merged = sorted(
+        ((iid, s) for iid, s in pool.items() if s > 0),
+        key=lambda x: x[1],
+        reverse=True,
+    )[:top_k]
+    return [
+        (iid, s, item_map[iid][0], item_map[iid][1])
+        for iid, s in merged
+        if iid in item_map
+    ]
 
 
 def _bm25_search_chunks(
@@ -35,11 +99,15 @@ def _bm25_search_chunks(
     query_keywords: list[str],
     spec_codes: list[str],
     top_k: int = 10,
+    raw_query: str | None = None,
 ) -> list[tuple[int, int, int, float, str, str | None, str | None]]:
     """BM25 关键词检索分块。
 
+    V1.2.4：候选池经 _merge_bm25_pool 合并 BM25 + 子串 + 整句字面命中，
+    使精确表名/章节名/条款号这类字面命中块能可靠进入混合检索的 RRF 融合。
+
     返回: list[(chunk_id, doc_id, chunk_index, bm25_score, chunk_content, doc_file_name, section_title)]
-    打分复用 text_utils.bm25_rank，行为与重构前一致。
+    打分复用 text_utils.bm25_rank / substring_rank，行为与重构前一致。
     """
     # 获取知识库中所有分块
     stmt = (
@@ -55,23 +123,11 @@ def _bm25_search_chunks(
         return []
 
     items = [(chunk.id, chunk.content or "", file_name) for chunk, file_name in rows]
-    ranked = bm25_rank(items, query_keywords, spec_codes, top_k=top_k)
-
-    # BM25 词频 0 时，降级子串匹配兜底（复用 text_utils.substring_rank，
-    # 帮助"大变形分级标准表"这类精确表名在词频 0 时仍能靠字面命中）
-    if not ranked:
-        from .text_utils import substring_rank
-
-        substr = substring_rank(items, query_keywords, spec_codes, top_k=top_k)
-        if substr:
-            item_map = {iid: (text, fname) for iid, text, fname in items}
-            ranked = [
-                (iid, s, item_map[iid][0], item_map[iid][1])
-                for iid, s in substr
-                if iid in item_map
-            ]
-            logger.info("BM25 分块无结果，子串兜底: kb_id=%d hits=%d", kb_id, len(ranked))
-
+    ranked = _merge_bm25_pool(
+        items,
+        bm25_rank(items, query_keywords, spec_codes, top_k=top_k),
+        query_keywords, spec_codes, top_k, raw_query,
+    )
     if not ranked:
         return []
 
@@ -175,7 +231,11 @@ def _vector_search(
         logger.info("向量化服务不可用，跳过向量检索")
         return []
 
-    return vs.vector_search(kb_id, query_embedding, top_k=top_k)
+    return vs.vector_search(
+        kb_id, query_embedding,
+        top_k=top_k,
+        score_threshold=settings.VECTOR_SCORE_THRESHOLD,
+    )
 
 
 def _rrf_fusion(
@@ -321,7 +381,7 @@ def hybrid_retrieve(
     if not has_vectors:
         # hybrid 但知识库无向量索引：退化为 BM25 分块检索（不抛异常）
         logger.warning("hybrid 模式无向量索引，退化为 BM25 分块检索: kb_id=%d", kb_id)
-        bm25_results = _bm25_search_chunks(db, kb_id, kw, sc, top_k=top_k)
+        bm25_results = _bm25_search_chunks(db, kb_id, kw, sc, top_k=top_k, raw_query=query)
         return [
             {
                 "doc_id": doc_id,
@@ -336,7 +396,7 @@ def hybrid_retrieve(
             for _chunk_id, doc_id, chunk_index, score, content, file_name, section_title in bm25_results
         ]
 
-    bm25_results = _bm25_search_chunks(db, kb_id, kw, sc, top_k=top_k * 3)
+    bm25_results = _bm25_search_chunks(db, kb_id, kw, sc, top_k=top_k * 3, raw_query=query)
     vector_results = _vector_search(db, kb_id, query, top_k=top_k * 3)
 
     if not bm25_results and not vector_results:
@@ -380,11 +440,68 @@ def hybrid_retrieve(
         return results
 
     results = _rrf_fusion(bm25_results, vector_results, top_k=top_k)
+    if settings.ENABLE_LITERAL_FORCE_INJECT and query:
+        results = _inject_literal_hit(results, bm25_results, query)
     logger.info(
         "混合检索完成: query=%r kb_id=%d bm25=%d vec=%d returned=%d",
         query[:50], kb_id, len(bm25_results), len(vector_results), len(results),
     )
     return results
+
+
+def _inject_literal_hit(
+    results: list[dict],
+    bm25_results: list[tuple[int, int, int, float, str, str | None, str | None]],
+    query: str,
+) -> list[dict]:
+    """字面命中强制回插（V1.2.4，ENABLE_LITERAL_FORCE_INJECT 默认关）。
+
+    若 query 整句在 bm25 候选池某块 content 中连续出现、且该块
+    (doc_id, chunk_index) 未进入最终 results，则取整句命中数最高的块，
+    替换 results 中 score 最低的一条，保持长度不变（= top_k）。
+    仅作为 RRF 融合后的兜底：确保精确表名/条款号类字面块进入 LLM 上下文。
+    """
+    phrase = strip_markdown((query or "").strip().lower())
+    if not phrase or not results:
+        return results
+
+    existing = {(r.get("doc_id"), r.get("chunk_index")) for r in results}
+    literal: list[tuple[tuple[int, int], str, str | None, str | None, float]] = []
+    for _chunk_id, doc_id, chunk_index, score, content, fname, stitle in bm25_results:
+        key = (doc_id, chunk_index)
+        if key in existing:
+            continue
+        if strip_markdown((content or "").lower()).count(phrase) > 0:
+            literal.append((key, content, fname, stitle, float(score)))
+
+    if not literal:
+        return results
+
+    # 整句命中数最多的块（必要时再按 bm25 score 打破平局）
+    best = max(
+        literal,
+        key=lambda x: (
+            strip_markdown((x[1] or "").lower()).count(phrase),
+            x[4],
+        ),
+    )
+    (_key, content, fname, stitle, score) = best
+
+    # 替换 score 最低的一条，保持结果条数 = top_k
+    new_results = list(results)
+    new_results.sort(key=lambda r: r.get("score", 0.0))
+    new_results[0] = {
+        "chunk_id": None,
+        "doc_id": best[0][0],
+        "chunk_index": best[0][1],
+        "content": content,
+        "score": score,
+        "file_name": fname,
+        "bm25_score": score,
+        "vector_score": 0.0,
+        "section_title": stitle,
+    }
+    return new_results
 
 
 def query_rewrite(query: str, llm_api_url: str, llm_api_key: str, model_name: str) -> str:

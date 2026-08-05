@@ -163,7 +163,7 @@ def _stream_chat(request: Request, kb_id: Optional[int], message: str, conversat
                 # V1.2.3 默认 hybrid：向量用原始 message（retrieve_with_hybrid 内部分离）
                 results = retrieve_with_hybrid(
                     db, kb_id, message,
-                    top_k=5, bm25_query=bm25_query,
+                    top_k=settings.RAG_TOP_K, bm25_query=bm25_query,
                 )
             except Exception as e:  # noqa: BLE001
                 # 检索异常：直接报错让用户感知问题

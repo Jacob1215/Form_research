@@ -28,15 +28,22 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /app
 
-# 安装 Python 依赖：清华 PyPI 主源 + 清华 PyTorch CPU 源（国内加速）
-# torch 走 CPU 版可避免拉取 CUDA 包，镜像体积从 ~2.5GB 降到 ~1.5GB
+# 安装 Python 依赖：阿里云 PyPI 主源（国内加速，V1.2.5 实测清华 PyPI 拥堵会超时）
+# torch 用仓库内本地 CPU wheel（V1.2.5）：清华 pytorch CPU 源对 pip 实际查询 404，
+# 从主源解析会拉完整 CUDA 版（nvidia-* 共 2GB+，构建慢/挂）；本地 +cpu wheel
+# 只补装 sympy/networkx 等轻量依赖，镜像体积可控。
 # 稳定依赖在 requirements.txt（层缓存），新装/更新版本走 requirements-new.txt：
 # 两条 COPY+RUN 必须分开，才能让 requirements.txt 的层不受新文件变化影响。
+COPY backend/torch-*.whl ./
 COPY backend/requirements.txt ./requirements.txt
-ENV PIP_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple \
-    PIP_EXTRA_INDEX_URL=https://mirrors.tuna.tsinghua.edu.cn/pytorch/whl/cpu \
+ENV PIP_INDEX_URL=https://mirrors.aliyun.com/pypi/simple/ \
     PIP_DEFAULT_TIMEOUT=120 \
     HF_ENDPOINT=https://hf-mirror.com
+# torch：本地 CPU wheel（避免拉 CUDA 全家桶）。
+# 注意：COPY 必须保留原文件名，pip 按 PEP 427 校验 wheel 文件名；./torch-*.whl
+# 由 sh 通配展开为真实文件名（如 torch-2.13.0+cpu-cp311-...whl）。
+RUN pip install --no-cache-dir ./torch-*.whl
+# 稳定依赖（requirements.txt 层缓存）
 RUN pip install --no-cache-dir -r requirements.txt
 
 # 新装 / 更新版本的依赖（requirements-new.txt 变化只重跑此层，大包不重复下载）
