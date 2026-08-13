@@ -18,7 +18,8 @@ logger = logging.getLogger("app.skills")
 SKILLS_DIR = os.path.join(os.path.dirname(__file__), "skills")
 
 # 各功能界面（子目录名）→ scope
-SCOPE_DIRS = ("report", "ppt")
+# V1.2.6：PPT 已改用 ppt-master 容器端到端生成，删除本地 ppt skill 库，仅保留报告 scope。
+SCOPE_DIRS = ("report",)
 
 
 def _strip_frontmatter(text: str) -> str:

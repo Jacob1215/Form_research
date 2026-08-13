@@ -108,13 +108,21 @@ class Settings(BaseSettings):
     # 防止完整报告/要点输出被后台 max_tokens 限制
     REPORT_MAX_TOKENS: int = 4096
 
-    # ---------- PPT 制作功能配置（V1.2.1+） ----------
+    # ---------- PPT 制作功能配置（V1.2.1+；V1.2.6 起接入 ppt-master 容器） ----------
 
-    # PPT 输出 token 上限：取 max(PPT_MAX_TOKENS, LLM 配置 max_tokens)，防止完整演示文稿被截断
-    PPT_MAX_TOKENS: int = 4096
+    # ppt-master 服务 HTTP 地址（compose 内服务名，容器间以服务名互通）
+    PPT_MASTER_API_URL: str = "http://ppt-master:8001"
 
-    # PPT skill 库 — 注入 system prompt 的指令块总长上限
-    PPT_SKILLS_MAX_CHARS: int = 24000
+    # 容器内 Claude Code 走 Anthropic 兼容端点；默认空 → 回退用 llm_configs 活动行的
+    # api_url / api_key / model_name。若活动配置是纯 OpenAI 兼容端点（/chat/completions），
+    # 需在部署时显式提供下面的 Anthropic 兼容地址（如 DeepSeek 的 anthropic 端点），避免影响 chat/report。
+    PPT_MASTER_ANTHROPIC_BASE_URL: str = ""
+    PPT_MASTER_ANTHROPIC_AUTH_TOKEN: str = ""
+    PPT_MASTER_ANTHROPIC_MODEL: str = ""
+
+    # 轮询 ppt-master 任务的间隔（秒）与超时（秒）。Quick Generate 为多步 agent，耗时数分钟。
+    PPT_MASTER_POLL_INTERVAL: float = 5.0
+    PPT_MASTER_TIMEOUT: int = 1800
 
 
 settings = Settings()

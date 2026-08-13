@@ -1,20 +1,16 @@
-"""PPT 制作路由（V1.2.1+）：文本 + 附件文档（docx/txt/md/pdf） + 知识库 → 两阶段对话（SSE）→ pptx 导出下载。
+"""PPT 制作路由（V1.2.1+；V1.2.6 起接入 ppt-master 容器）。
 
-以「报告总结」功能为模板，复用其纯函数（_sse / _get_active_llm / _build_system_prompt /
-_build_llm_messages / 大文档分块）与 skill 库 / 知识库检索 / 大模型配置。
+V1.2.6 变更：删除本地「大模型两阶段生成 Markdown → python-pptx 导出」链路，
+改为调用 ppt-master Docker 容器（Claude Code + ppt-master skill）端到端生成
+**原生可编辑 PPTX**。后端只负责：检索知识库、读取附件、组装 brief、下发大模型
+凭据、轮询容器任务并把产物落盘，供前端 SSE 流式展示进度与下载。
 
-版本演进：
-- V1.2.1：PPT 制作功能上线。两阶段生成 — 先流式输出大纲（显示在对话框），
-  再静默生成完整演示文稿（供导出）；提供 skill 选择（scope: ppt）与历史记录。
-- V1.2.2：支持附件文档上传（docx/txt/md/pdf）。上传复用报告端点 /api/report/upload
-  （文档 URL/侧车共用 /api/report/uploads/ 命名空间，_build_llm_messages 无需改动即注入）；
-  大文档走 map-reduce 分块阅读，避免上下文溢出。
+事件：progress（进度）、ppt_file（download_url，生成完成）、done、error。
 """
 import os
-import json
-import uuid
+import re
+import time
 import logging
-from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import FileResponse, StreamingResponse
@@ -24,60 +20,27 @@ from sqlalchemy.orm import Session
 from ..config import settings
 from ..database import get_db, SessionLocal
 from ..models import KnowledgeBase, PptRecord
-from ..schemas import PptChatRequest, PptExportRequest, PptRecordCreate
+from ..schemas import PptChatRequest, PptRecordCreate
 from ..security import decrypt
-from ..llm_provider import factory as llm_factory
 from ..rag_service import retrieve_with_hybrid, _build_structured_context
-from ..pptx_service import generate_pptx
-from ..skill_library import get_skills_block, list_skills
-# 复用报告路由的纯函数（SSE 格式 / 启用大模型 / 提示词组装 / 消息组装 / 大文档分块）
-from .report import (
-    _sse, _get_active_llm, _build_system_prompt, _build_llm_messages,
-    _read_doc_sidecar, _chunk_document, _summarize_chunk,
-    _combine_chunk_summaries, _get_cached_summary, _write_summary_cache,
-)
+from .. import ppt_master_client
+# 复用报告路由的纯函数（SSE 格式 / 启用大模型 / 附件侧车读取）
+from .report import _sse, _get_active_llm, _read_doc_sidecar
 
 logger = logging.getLogger("app.ppt")
 
 router = APIRouter(prefix="/api/ppt", tags=["ppt"])
 
-# PPT 导出输出目录：{UPLOAD_DIR}/ppt/out
+# PPT 输出目录：{UPLOAD_DIR}/ppt/out/{task_id}.pptx（本地落盘，供下载与历史记录）
 PPT_UPLOAD_DIR = os.path.join(settings.UPLOAD_DIR, "ppt")
+PPT_OUT_DIR = os.path.join(PPT_UPLOAD_DIR, "out")
 
-# PPT skill 指令块标题（区别于报告的标题）
-PPT_SKILLS_HEADER = "## PPT 编制技能规则（必须遵循）\n\n"
-
-# V1.2.1：阶段一 — 大纲生成提示词（流式显示在对话框）
-PPT_OUTLINE_SYSTEM_PROMPT = """你是一名专业的 PPT 制作助手。请根据用户提供的文字内容与知识库检索到的规范内容，先输出一份演示文稿大纲（分页提纲）。
-
-## 输出要求
-1. 按页列出：每页一行，格式为「第N页：<页面标题>」，标题凝练、不超过 15 字。
-2. 每页下用 `- ` 列出 2-4 个要点，覆盖该页要讲的核心内容。
-3. 覆盖：概述 → 主要要点（分页）→ 规范依据（如有）→ 结论与建议。
-4. 引用规范时标注出处（《规范名称》+ 条款号）。
-5. 不得编造资料中不存在的内容；资料不足时说明缺什么。
-"""
-
-# V1.2.1：阶段二 — 完整演示文稿生成提示词（静默收集，供 pptx 导出）
-PPT_SYSTEM_PROMPT = """你是一名专业的 PPT 制作助手，负责根据用户提供的文字内容与知识库检索到的规范内容，制作结构清晰、要点突出、可直接导出为 pptx 的演示文稿。
-
-## 幻灯片 Markdown 约定（必须严格遵守）
-1. 每一页幻灯片以 `##` 开头（该行即为幻灯片标题），标题凝练、不超过 15 字。
-2. `###` 表示当前页内的小节副标题（按需使用）。
-3. 每页正文用条目化要点：`- ` 或 `1. `，每页 4-6 条；严禁把整段文字直接粘贴进幻灯片。
-4. 页与页之间用独占一行的 `---` 分隔（必须单独一行，前后留空行）。
-5. 如需表格，用 Markdown 表格语法（`| a | b |`）；资料中有图片地址时用 `![说明](url)`，仅可使用提供的地址，禁止编造。
-6. 引用知识库或资料中的规范条款时标注出处：《规范名称》+ 条款号。
-7. 不得编造资料中不存在的内容；资料不足时在相应页内说明。
-8. 只输出符合上述约定的 Markdown 文本，不要输出任何解释性文字或代码块包裹。
-
-## 结构参考
-封面（标题）→ 概述/背景 → 主要要点（分页展开）→ 规范依据（如有）→ 结论与建议。可按内容灵活调整，但每页一主题。
-"""
+# task_id 为容器返回的 32 位 hex（uuid4().hex），用于落盘文件名与下载路由防目录穿越
+_TASK_ID_RE = re.compile(r"^[0-9a-f]{32}$")
 
 
 def _record_to_dict(rec: PptRecord, include_content: bool = False) -> dict:
-    """PptRecord → 字典。"""
+    """PptRecord → 字典。content 自 V1.2.6 起存 pptx 的 task_id（file_id）。"""
     d = {
         "id": rec.id,
         "title": rec.title,
@@ -91,16 +54,68 @@ def _record_to_dict(rec: PptRecord, include_content: bool = False) -> dict:
     return d
 
 
-@router.get("/skills")
-def list_ppt_skills():
-    """V1.2.1：PPT skill 清单（scope: ppt），供输入框 / 菜单选择。"""
-    return {"items": list_skills("ppt")}
+def _cap_doc_text(text: str) -> str:
+    """上传文档文本超长时按首尾截断（中间省略），避免 brief 撑爆容器上下文。"""
+    cap = settings.REPORT_DOC_TEXT_CAP
+    if len(text) <= cap:
+        return text
+    head = text[: cap * 2 // 3]
+    tail = text[-cap // 3:]
+    return head + "\n\n...（文档过长，中间部分省略）...\n\n" + tail
+
+
+def _gather_doc_texts(req: PptChatRequest) -> list[tuple[str, str]]:
+    """收集上传文档文本（同 URL 去重，多轮追问不重复注入），返回 [(name, text)]。"""
+    seen: set[str] = set()
+    out: list[tuple[str, str]] = []
+    for m in req.messages:
+        if m.role != "user" or not m.documents:
+            continue
+        for ref in m.documents:
+            if not ref.url or ref.url in seen:
+                continue
+            text = _read_doc_sidecar(ref.url)
+            if not text:
+                continue
+            seen.add(ref.url)
+            name = (ref.name or "").strip() or "参考文档"
+            out.append((name, _cap_doc_text(text)))
+    return out
+
+
+def _build_brief(req: PptChatRequest, context_block: str, doc_texts: list[tuple[str, str]]) -> str:
+    """组装发给 ppt-master 容器的编制 brief（标题 + 主题 + 知识库上下文 + 附件文本）。"""
+    user_msgs = [m for m in req.messages if m.role == "user" and (m.content or "").strip()]
+    topic = (user_msgs[-1].content if user_msgs else "").strip()
+    parts: list[str] = []
+    title = (req.title or "").strip()
+    if title:
+        parts.append(f"标题：{title}")
+    if topic:
+        parts.append(f"主题与要求：\n{topic}")
+    if context_block:
+        parts.append(f"知识库检索到的相关规范条文：\n{context_block}")
+    for name, text in doc_texts:
+        parts.append(f"参考文档《{name}》：\n{text}")
+    return "\n\n".join(parts)
+
+
+def _resolve_anthropic(llm) -> tuple[str, str, str]:
+    """确定传给容器 Claude Code 的 Anthropic 兼容凭据。
+
+    优先用部署时显式配置的 PPT_MASTER_ANTHROPIC_*；未配则回退用 llm_configs 活动行
+    的 api_url / api_key / model_name。
+    """
+    base_url = settings.PPT_MASTER_ANTHROPIC_BASE_URL or llm.api_url
+    api_key = settings.PPT_MASTER_ANTHROPIC_AUTH_TOKEN or decrypt(llm.api_key_enc)
+    model = settings.PPT_MASTER_ANTHROPIC_MODEL or llm.model_name
+    return base_url, api_key, model
 
 
 def _stream_ppt(req: PptChatRequest):
-    """生成 SSE 流：检索知识库（可选）→ 阶段一大纲流式输出 → 阶段二完整演示文稿静默收集。
+    """SSE 流：检索知识库 + 读附件 → 组 brief → 调 ppt-master 容器 → 轮询进度 → 落盘。
 
-    事件：token（大纲）、progress（阶段二进行中）、ppt（完整演示文稿）、done、error。
+    事件：progress（进度）、ppt_file（download_url）、done、error。
     """
     db = SessionLocal()
     try:
@@ -114,24 +129,12 @@ def _stream_ppt(req: PptChatRequest):
         if llm is None:
             yield _sse({"type": "error", "message": "未配置启用的大模型，请联系管理员"})
             return
-        api_key = decrypt(llm.api_key_enc)
+        base_url, api_key, model = _resolve_anthropic(llm)
         if not api_key:
             yield _sse({"type": "error", "message": "大模型密钥无法解密"})
             return
 
-        class _Cfg:
-            pass
-        cfg = _Cfg()
-        cfg.api_url = llm.api_url
-        cfg.api_key = api_key
-        cfg.model_name = llm.model_name
-        cfg.temperature = llm.temperature
-        # 输出 token 上限取 max(LLM 配置, PPT_MAX_TOKENS)，防止完整演示文稿被截断
-        cfg.max_tokens = max(llm.max_tokens, settings.PPT_MAX_TOKENS)
-        cfg.timeout = llm.timeout
-        provider = llm_factory(llm.provider)
-
-        # 取最后一条用户消息作为检索主题与编制依据
+        # 取最后一条用户消息作为检索主题
         user_msgs = [m for m in req.messages if m.role == "user" and (m.content or "").strip()]
         query = (user_msgs[-1].content if user_msgs else "").strip()
 
@@ -144,110 +147,65 @@ def _stream_ppt(req: PptChatRequest):
             except Exception as e:  # noqa: BLE001
                 logger.warning("PPT 知识库检索失败，降级为纯文本编制: %s", e)
 
-        # V1.2.2：大文档分块阅读（map 步）— 仅对超过单次注入上限的文档启用。
-        # 附件上传复用报告端点 → 文档 URL/侧车位于 /api/report/uploads/ 命名空间，
-        # _read_doc_sidecar / _build_llm_messages 可直接复用，无需改动。
-        doc_override: dict[str, str] = {}
-        for m in req.messages:
-            if m.role != "user" or not m.documents:
-                continue
-            for ref in m.documents:
-                if not ref.url or ref.url in doc_override:
-                    continue
-                text = _read_doc_sidecar(ref.url)
-                if not text:
-                    continue
-                if len(text) <= settings.REPORT_DOC_TEXT_CAP:
-                    continue  # 单次注入即可，无需分块
-                summary = _get_cached_summary(ref.url)
-                if summary is None:
-                    name = (ref.name or "").strip() or "参考文档"
-                    chunks = _chunk_document(text, settings.REPORT_CHUNK_SIZE)
-                    overflow = len(chunks) > settings.REPORT_MAX_CHUNKS
-                    if overflow:
-                        keep_tail = 5
-                        head_count = settings.REPORT_MAX_CHUNKS - keep_tail
-                        chunks = chunks[:head_count] + chunks[-keep_tail:]
-                    parts: list[str] = []
-                    total = len(chunks)
-                    for i, chunk in enumerate(chunks, 1):
-                        yield _sse({
-                            "type": "progress",
-                            "message": f"正在阅读文档「{name}」（{i}/{total}）...",
-                        })
-                        parts.append(_summarize_chunk(chunk, i, total, name, cfg, provider))
-                    summary = _combine_chunk_summaries(parts)
-                    if overflow:
-                        summary += f"\n\n⚠️ 文档过长，仅处理了首部与末尾部分（共 {len(chunks)} 块），中间部分省略。"
-                    _write_summary_cache(ref.url, summary)
-                doc_override[ref.url] = summary
+        # 上传附件文本（复用报告端点的侧车 txt）
+        doc_texts = _gather_doc_texts(req)
+        brief = _build_brief(req, context_block, doc_texts)
+        title = (req.title or "").strip()
 
-        # 仅注入用户选中的 PPT skill（未选则不注入）
-        skills_block = get_skills_block(
-            req.skills or [], header=PPT_SKILLS_HEADER,
-            max_chars=settings.PPT_SKILLS_MAX_CHARS,
-        )
-
-        # ============ 阶段一：流式生成大纲（显示在对话框） ============
-        outline_msgs = _build_llm_messages(
-            req, context_block, doc_override,
-            system_prompt=_build_system_prompt(PPT_OUTLINE_SYSTEM_PROMPT, skills_block),
-            tail_instruction="请现在输出本演示文稿的大纲（分页提纲），不要展开完整正文。",
-        )
-        outline_parts: list[str] = []
+        # 提交 ppt-master 容器任务
+        yield _sse({"type": "progress", "message": "正在提交 PPT 生成任务..."})
         try:
-            for token in provider.stream_chat(outline_msgs, cfg):  # type: ignore[arg-type]
-                if token:
-                    outline_parts.append(token)
-                    yield _sse({"type": "token", "content": token})
+            task_id = ppt_master_client.generate(brief, title, base_url, api_key, model)
         except Exception as e:  # noqa: BLE001
-            logger.error("PPT 大纲生成失败：%s", e)
-            yield _sse({"type": "error", "message": f"PPT 生成失败：{e}"})
-            return
-        outline = "".join(outline_parts).strip()
-        if not outline:
-            yield _sse({
-                "type": "error",
-                "message": (
-                    "大模型未生成 PPT 大纲。可能原因：上下文超出模型可处理范围，或 max_tokens 过小。"
-                    "建议：在后台调大 max_tokens；减少所选技能；或换用更大上下文的模型。"
-                ),
-            })
+            logger.error("提交 ppt-master 任务失败：%s", e)
+            yield _sse({"type": "error", "message": f"提交 PPT 生成任务失败：{e}"})
             return
 
-        # ============ 阶段二：静默生成完整演示文稿（供 pptx 导出与展开查看） ============
-        yield _sse({"type": "progress", "message": "正在生成完整演示文稿..."})
-        deck_msgs = _build_llm_messages(
-            req, context_block, doc_override,
-            system_prompt=_build_system_prompt(PPT_SYSTEM_PROMPT, skills_block),
-            tail_instruction=(
-                "以下是本演示文稿的大纲（供你组织每页结构）：\n\n"
-                f"{outline[:4000]}\n\n"
-                "请根据以上大纲与资料，编写完整、可直接导出为 pptx 的演示文稿，严格遵守「幻灯片 Markdown 约定」。"
-            ),
-        )
-        deck_parts: list[str] = []
+        # 轮询任务状态，回传进度（保持 SSE 长连接）
+        deadline = time.time() + settings.PPT_MASTER_TIMEOUT
+        last_msg = ""
+        status = "running"
+        while True:
+            if time.time() > deadline:
+                yield _sse({"type": "error", "message": "PPT 生成超时，请稍后重试"})
+                return
+            try:
+                st = ppt_master_client.get_task(task_id)
+            except Exception as e:  # noqa: BLE001
+                logger.error("查询 ppt-master 任务失败：%s", e)
+                yield _sse({"type": "error", "message": f"查询 PPT 任务失败：{e}"})
+                return
+            status = st.get("status")
+            msg = st.get("message", "")
+            if status in ("done", "error"):
+                break
+            if msg and msg != last_msg:
+                yield _sse({"type": "progress", "message": msg})
+                last_msg = msg
+            time.sleep(settings.PPT_MASTER_POLL_INTERVAL)
+
+        if status == "error":
+            yield _sse({"type": "error", "message": msg or "PPT 生成失败"})
+            return
+
+        # 下载产物并落盘到本地 out/ 目录（下载与历史记录都读本地文件，不依赖容器保留）
         try:
-            for token in provider.stream_chat(deck_msgs, cfg):  # type: ignore[arg-type]
-                if token:
-                    deck_parts.append(token)
+            content = ppt_master_client.download(task_id)
         except Exception as e:  # noqa: BLE001
-            logger.error("PPT 完整版生成失败：%s", e)
-            yield _sse({"type": "error", "message": f"PPT 生成失败：{e}"})
+            logger.error("下载 ppt-master 产物失败：%s", e)
+            yield _sse({"type": "error", "message": f"下载 PPT 失败：{e}"})
             return
-        full_ppt = "".join(deck_parts).strip()
-        if not full_ppt:
-            total_chars = sum(len(m.get("content") or "") for m in deck_msgs if m.get("role") == "user")
-            logger.warning("PPT 完整版返回空内容，user 消息共 %d 字符", total_chars)
-            yield _sse({
-                "type": "error",
-                "message": (
-                    "大模型未生成完整 PPT。可能原因：大纲+上下文仍超出模型可处理范围，或 max_tokens 过小。"
-                    "建议：在后台调大 max_tokens；减少所选技能；或换用更大上下文的模型。"
-                ),
-            })
+        os.makedirs(PPT_OUT_DIR, exist_ok=True)
+        out_path = os.path.join(PPT_OUT_DIR, f"{task_id}.pptx")
+        try:
+            with open(out_path, "wb") as f:
+                f.write(content)
+        except OSError as e:
+            logger.error("PPT 产物落盘失败：%s", e)
+            yield _sse({"type": "error", "message": f"保存 PPT 失败：{e}"})
             return
-        yield _sse({"type": "ppt", "content": full_ppt})
+
+        yield _sse({"type": "ppt_file", "download_url": f"/api/ppt/download/{task_id}"})
         yield _sse({"type": "done"})
     except Exception as e:  # noqa: BLE001
         logger.exception("PPT SSE 处理异常")
@@ -269,21 +227,20 @@ def ppt_chat(req: PptChatRequest):
     )
 
 
-# ---------- pptx 导出 ----------
+# ---------- pptx 下载 ----------
 
-@router.post("/export")
-def export_ppt(req: PptExportRequest):
-    """将最终演示文稿 Markdown 生成 16:9 的 pptx 并下载。"""
-    title = (req.title or "").strip() or "PPT演示"
-    out_dir = os.path.join(PPT_UPLOAD_DIR, "out")
-    os.makedirs(out_dir, exist_ok=True)
-    filename = f"{uuid.uuid4().hex}.pptx"
-    out_path = os.path.join(out_dir, filename)
-    generate_pptx(req.content, title, out_path)
+@router.get("/download/{task_id}")
+def download_ppt(task_id: str):
+    """下载已生成的 pptx（本地落盘文件）。task_id 为 32 位 hex，防目录穿越。"""
+    if not _TASK_ID_RE.fullmatch(task_id):
+        raise HTTPException(status_code=404, detail="文件不存在")
+    path = os.path.join(PPT_OUT_DIR, f"{task_id}.pptx")
+    if not os.path.isfile(path):
+        raise HTTPException(status_code=404, detail="文件不存在")
     return FileResponse(
-        out_path,
+        path,
         media_type="application/vnd.openxmlformats-officedocument.presentationml.presentation",
-        filename=f"{title}.pptx",
+        filename=f"{task_id}.pptx",
     )
 
 
@@ -300,10 +257,14 @@ def list_ppt_records(db: Session = Depends(get_db)):
 
 @router.post("/records")
 def create_ppt_record(req: PptRecordCreate, db: Session = Depends(get_db)):
-    """手动保存一份已生成的演示文稿。"""
+    """手动保存一份已生成的演示文稿。content 存 pptx 的 task_id（file_id）。"""
+    file_id = (req.content or "").strip()
+    src = os.path.join(PPT_OUT_DIR, f"{file_id}.pptx")
+    if not _TASK_ID_RE.fullmatch(file_id) or not os.path.isfile(src):
+        raise HTTPException(status_code=400, detail="PPT 文件不存在或非法")
     rec = PptRecord(
         title=(req.title or "").strip() or "PPT",
-        content=req.content,
+        content=file_id,
         question=(req.question or "").strip() or None,
     )
     db.add(rec)
@@ -314,7 +275,7 @@ def create_ppt_record(req: PptRecordCreate, db: Session = Depends(get_db)):
 
 @router.get("/records/{record_id}")
 def get_ppt_record(record_id: int, db: Session = Depends(get_db)):
-    """PPT 详情（含完整内容）。"""
+    """PPT 详情（content 为 pptx 的 file_id，下载走 /api/ppt/download/{file_id}）。"""
     rec = db.get(PptRecord, record_id)
     if rec is None:
         raise HTTPException(status_code=404, detail="PPT 记录不存在")

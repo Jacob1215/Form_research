@@ -268,7 +268,7 @@ interface StreamCallbacks {
   onError?: (err: string) => void
   onProgress?: (message: string) => void
   onReport?: (content: string) => void
-  onPpt?: (content: string) => void
+  onPptFile?: (downloadUrl: string) => void
 }
 
 function streamSSE(path: string, body: unknown, cb: StreamCallbacks): StreamHandle {
@@ -301,10 +301,10 @@ function streamSSE(path: string, body: unknown, cb: StreamCallbacks): StreamHand
         if (typeof content === 'string') cb.onReport?.(content)
         break
       }
-      case 'ppt': {
-        // V1.2.1：完整演示文稿内容（对话框只显示大纲，完整内容用于展开查看与 pptx 导出）
-        const content = evt.content
-        if (typeof content === 'string') cb.onPpt?.(content)
+      case 'ppt_file': {
+        // V1.2.6：ppt-master 容器生成完成，携带下载地址（原生 PPTX）
+        const downloadUrl = evt.download_url
+        if (typeof downloadUrl === 'string') cb.onPptFile?.(downloadUrl)
         break
       }
       case 'token': {
@@ -513,21 +513,19 @@ export const fetchReportRecord = (id: string): Promise<ReportRecordDetailItem> =
 export const deleteReportRecord = (id: string): Promise<{ ok: boolean }> =>
   apiDelete<{ ok: boolean }>(`/api/report/records/${id}`)
 
-/* ------------------------- PPT 制作功能（V1.2.1+） ------------------------- */
-// PPT 复用报告的消息/附件/skill/记录类型（后端返回结构一致）。
+/* ------------------------- PPT 制作功能（V1.2.1+；V1.2.6 接入 ppt-master 容器） ------------------------- */
+// V1.2.6：不再本地生成 Markdown，改为容器端到端生成原生 PPTX；复用报告的消息/附件/记录类型。
 
 export interface StreamPptParams {
   kb_id: string | null
   title?: string
   messages: ReportMessage[]
-  skills?: string[]
   // V1.2.5：限定检索的规范（文档）ID 列表；空/null/缺省 = 搜整个知识库
   doc_ids?: number[] | null
-  onToken: (content: string) => void
   onDone?: () => void
   onError?: (err: string) => void
   onProgress?: (message: string) => void
-  onPpt?: (content: string) => void
+  onPptFile?: (downloadUrl: string) => void
 }
 
 export function streamPptChat(params: StreamPptParams): StreamHandle {
@@ -535,26 +533,18 @@ export function streamPptChat(params: StreamPptParams): StreamHandle {
     kb_id: params.kb_id ?? null,
     title: params.title,
     messages: params.messages,
-    skills: params.skills,
     doc_ids: params.doc_ids?.length ? params.doc_ids : null,
   }, params)
 }
 
-// V1.2.1：PPT skill 清单（scope: ppt），结构同报告 skill
-export const fetchPptSkills = (): Promise<ReportSkillsResponse> =>
-  apiGet<ReportSkillsResponse>('/api/ppt/skills')
-
-export async function exportPptx(title: string, content: string): Promise<Blob> {
-  const res = await fetch('/api/ppt/export', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ title, content }),
-  })
+// V1.2.6：下载容器生成的 .pptx（本地落盘文件）
+export async function downloadPptxFile(taskId: string): Promise<Blob> {
+  const res = await fetch(`/api/ppt/download/${encodeURIComponent(taskId)}`)
   if (!res.ok) throw new Error(await extractError(res))
   return res.blob()
 }
 
-// PPT 记录（手动保存），返回结构同报告记录（含 question 字段）
+// PPT 记录（手动保存），content 存 pptx 的 file_id（task_id）
 export const savePptRecord = (title: string, content: string, question?: string): Promise<ReportRecordDetailItem> =>
   apiPost<ReportRecordDetailItem>('/api/ppt/records', { title, content, question })
 

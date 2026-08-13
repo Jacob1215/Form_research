@@ -34,9 +34,26 @@ services:
       - SUBSTRING_PHRASE_WEIGHT=${SUBSTRING_PHRASE_WEIGHT:-}
       - ENABLE_LITERAL_FORCE_INJECT=${ENABLE_LITERAL_FORCE_INJECT:-}
       - CORS_ORIGINS=${CORS_ORIGINS:-}
+      # V1.2.6：ppt-master 服务地址与 Anthropic 兼容端点覆盖（默认回退 llm_configs 活动配置）
+      - PPT_MASTER_API_URL=${PPT_MASTER_API_URL:-}
+      - PPT_MASTER_ANTHROPIC_BASE_URL=${PPT_MASTER_ANTHROPIC_BASE_URL:-}
+      - PPT_MASTER_ANTHROPIC_AUTH_TOKEN=${PPT_MASTER_ANTHROPIC_AUTH_TOKEN:-}
+      - PPT_MASTER_ANTHROPIC_MODEL=${PPT_MASTER_ANTHROPIC_MODEL:-}
     depends_on:
       db:
         condition: service_healthy
+      ppt-master:
+        condition: service_started
+    restart: unless-stopped
+
+  # V1.2.6：ppt-master 容器（Claude Code + ppt-master skill + FastAPI wrapper），向 PPT 页面提供原生 PPTX 生成服务
+  ppt-master:
+    container_name: form_research-ppt-master-test
+    build:
+      context: ./ppt-master
+      dockerfile: Dockerfile
+    # 注意：/work 不挂命名卷——命名卷会继承上次 root 运行的属主，导致非 root 的 pptmaster
+    # 无法写 /work/<task_id>。改用镜像层（构建时已 chown 给 pptmaster），临时 scratch 无需持久化。
     restart: unless-stopped
 
   db:

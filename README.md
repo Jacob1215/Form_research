@@ -2,7 +2,7 @@
 
 基于大语言模型的 RAG（检索增强生成）智能问答 Web 应用，专为工程规范文档知识库定向提问而设计。
 
-[![Version](https://img.shields.io/badge/version-V1.2.5-blue.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-V1.2.6-blue.svg)](CHANGELOG.md)
 [![Python](https://img.shields.io/badge/python-3.11+-3776AB.svg?style=flat&logo=python&logoColor=white)](https://www.python.org/)
 [![React](https://img.shields.io/badge/react-18-61DAFB.svg?style=flat&logo=react&logoColor=white)](https://react.dev/)
 [![Docker](https://img.shields.io/badge/docker-ready-2496ED.svg?style=flat&logo=docker&logoColor=white)](https://www.docker.com/)
@@ -13,7 +13,7 @@
 
 - 🤖 **智能问答**：选择知识库后，基于 RAG 技术提供精准回答，引用规范原文与条款出处；支持连续多轮对话（V1.2.3）
 - 📊 **报告总结编制**（V1.1+）：上传图片/文档 + 知识库检索 → 两阶段生成（要点→完整报告）→ 导出 docx；支持 skill 库注入编制规则（V1.1.3）
-- 📽️ **PPT 制作**（V1.2.1+）：文本 + 附件文档 + 知识库 → 两阶段生成（大纲→完整演示文稿）→ 下载 16:9 的 .pptx；支持 PPT 专用 skill 选择
+- 📽️ **PPT 制作**（V1.2.1+，V1.2.6 起接入 ppt-master）：文本 + 附件文档 + 知识库 → 调用 ppt-master 容器（Claude Code + ppt-master skill）端到端生成原生可编辑 .pptx
 - 🎯 **指定规范检索范围**（V1.2.5）：对话/报告/PPT 三个界面均可勾选指定规范文档，缩小检索范围至单本/多本规范
 - 🖼️ **检索结果图片展示**（V1.0.9）：查询结果与图片相关时，回答中直接展示相关图片，排版与文本一致
 - 📚 **多格式文档支持**：PDF、Word、TXT、Markdown 上传与解析
@@ -57,11 +57,10 @@ Form_research/
 │   │   ├── embedding_service.py    # 本地/远程 Embedding 服务
 │   │   ├── chunking_service.py     # 文档分块（600 字符 + 150 重叠）
 │   │   ├── docx_service.py         # Markdown → docx 报告生成（V1.1）
-│   │   ├── pptx_service.py         # Markdown → pptx 演示文稿生成（V1.2.1）
-│   │   ├── skill_library.py        # 技能库读取与注入（V1.1.3，report/ppt 分离）
+│   │   ├── ppt_master_client.py    # ppt-master 容器 HTTP 客户端（V1.2.6）
+│   │   ├── skill_library.py        # 技能库读取与注入（V1.1.3，仅 report）
 │   │   ├── skills/                 # 技能文件目录
-│   │   │   ├── report/             # 报告编制技能
-│   │   │   └── ppt/                # PPT 制作技能
+│   │   │   └── report/             # 报告编制技能
 │   │   ├── models.py               # SQLAlchemy 数据模型
 │   │   ├── schemas.py              # Pydantic 请求/响应模型
 │   │   ├── config.py               # 应用配置（pydantic-settings）
@@ -87,6 +86,10 @@ Form_research/
 │   │   ├── api.ts                  # API 客户端封装
 │   │   └── version.ts              # 版本号
 │   └── package.json
+├── ppt-master/                     # ppt-master 服务镜像（V1.2.6）
+│   ├── Dockerfile                  # Claude Code + ppt-master skill + wrapper
+│   ├── server.py                   # FastAPI wrapper（/generate、/tasks、下载）
+│   └── requirements.txt
 ├── docker-compose.yml              # Docker Compose 编排
 ├── .env.example                    # 环境变量示例
 └── README.md
@@ -206,10 +209,9 @@ docker compose logs -f app
 2. **指定规范**（V1.2.5，可选）：勾选一本或多本规范缩小检索范围
 3. 输入演示文稿标题（用于 pptx 文件名与封面标题）
 4. 在输入框中粘贴文字内容
-5. 点击附件按钮上传参考文档（docx/txt/md/pdf），大文档自动分块阅读
-6. 输入 `/` 选择 PPT 制作技能（skill，独立于报告技能）
-7. 点击发送，AI 先输出大纲（流式显示），再静默生成完整演示文稿
-8. 可展开查看完整演示文稿、下载 16:9 的 .pptx、保存到左侧历史记录
+5. 点击附件按钮上传参考文档（docx/txt/md/pdf）
+6. 点击发送，后端调用 ppt-master 容器（Claude Code + ppt-master skill）端到端生成原生可编辑 PPTX，流式显示进度
+7. 生成完成后点击「下载pptx」下载，或「保存PPT」到左侧历史记录
 
 ## ⚙️ 环境变量
 
@@ -235,6 +237,10 @@ docker compose logs -f app
 | `SUBSTRING_PHRASE_WEIGHT` | 可选 | `5.0` | 原始整句精确命中的权重乘数（V1.2.4） |
 | `ENABLE_LITERAL_FORCE_INJECT` | 可选 | `false` | 融合后字面命中强制回插（V1.2.4，默认关） |
 | `CORS_ORIGINS` | 可选 | `*` | CORS 允许来源 |
+| `PPT_MASTER_API_URL` | 可选 | `http://ppt-master:8001` | ppt-master 容器 HTTP 地址（V1.2.6） |
+| `PPT_MASTER_ANTHROPIC_BASE_URL` | 可选 | - | 容器 Claude Code 的 Anthropic 兼容端点（留空回退 `llm_configs`，V1.2.6） |
+| `PPT_MASTER_ANTHROPIC_AUTH_TOKEN` | 可选 | - | Anthropic 兼容端点令牌（留空回退 `llm_configs` 解密密钥，V1.2.6） |
+| `PPT_MASTER_ANTHROPIC_MODEL` | 可选 | - | 容器 Claude Code 使用的模型（留空回退 `llm_configs` 的 model_name，V1.2.6） |
 
 ## 📊 架构详解
 
@@ -357,6 +363,12 @@ docker compose up -d
 </details>
 
 ## 📝 版本历史
+
+### V1.2.6 (2026-08-13)
+- 📽️ **PPT 制作接入 ppt-master**：删除本地「大模型两阶段生成 Markdown → python-pptx 导出」旧链路，改为下载 [hugohe3/ppt-master](https://github.com/hugohe3/ppt-master.git) 包装为独立 Docker 容器，由容器内 Claude Code + ppt-master skill 端到端生成**原生可编辑 PPTX**（SVG → DrawingML，质量门禁 0 阻塞错误）
+- 🐳 **新增 ppt-master 服务**：`ppt-master/`（Dockerfile + FastAPI wrapper `server.py`），`docker-compose.yml` 新增 `ppt-master` 服务；后端经 `ppt_master_client.py` 调用，LLM 凭据从 `llm_configs` 解密后下发
+- 🗑️ **删除旧 PPT skill 库**：移除 `backend/app/skills/ppt/` 与 `pptx_service.py`，`skill_library` 仅保留 report scope
+- ⚙️ **新增配置**：`PPT_MASTER_API_URL`、`PPT_MASTER_ANTHROPIC_BASE_URL`/`AUTH_TOKEN`/`MODEL`（容器 Claude Code 走 Anthropic 兼容端点，复用同一 DeepSeek key）
 
 ### V1.2.5 (2026-08-05)
 - ✨ **指定规范检索范围**：对话/报告/PPT 三界面新增「规范选择」下拉，可勾选一本或多本规范将检索范围限定到所选文档（`doc_ids` 全链路透传 BM25 + 向量 + RRF 融合）

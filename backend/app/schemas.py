@@ -279,16 +279,9 @@ class PptChatRequest(BaseModel):
     # kb_id 允许为空（不选知识库，纯文本编制）
     kb_id: Optional[int] = None
     title: Optional[str] = None
-    # 本次生成选用的 PPT skill 名称列表（未选则为空/None，不注入技能指令）
-    skills: Optional[list[str]] = None
     # V1.2.5：限定检索的规范（文档）ID 列表；None/空 = 搜整个知识库
     doc_ids: Optional[list[int]] = None
     messages: list[ReportMessage] = Field(..., min_length=1)
-
-
-class PptExportRequest(BaseModel):
-    title: Optional[str] = None
-    content: str = Field(..., min_length=1)
 
 
 class PptRecordCreate(BaseModel):
