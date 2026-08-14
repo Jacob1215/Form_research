@@ -281,6 +281,15 @@ export default function Chat() {
 
   const handleSend = () => { sendMessage(input) }
 
+  /* ----- 停止生成（V1.2.7：手动取消当前流） ----- */
+  const handleStop = () => {
+    if (streamRef.current) { streamRef.current.abort(); streamRef.current = null }
+    setStreaming(false)
+    setMessages((prev) => prev.map((m) =>
+      (m.status === 'thinking' || m.status === 'streaming') ? { ...m, status: 'done' } : m,
+    ))
+  }
+
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault()
@@ -596,13 +605,22 @@ export default function Chat() {
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={handleKeyDown}
             />
-            <button className="send-btn" type="button" aria-label="发送" disabled={!canSend} onClick={handleSend}>
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M14.536 21.686a.5.5 0 0 0 .937-.024l6.5-19a.496.496 0 0 0-.635-.635l-19 6.5a.5.5 0 0 0-.024.937l7.93 3.18a2 2 0 0 1 1.112 1.11z" />
-                <path d="m21.854 2.147-10.94 10.939" />
-              </svg>
-              <span>发送</span>
-            </button>
+            {streaming ? (
+              <button className="send-btn" type="button" aria-label="停止生成" onClick={handleStop} style={{ background: '#dc2626' }}>
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
+                  <rect x="6" y="6" width="12" height="12" rx="2" />
+                </svg>
+                <span>停止</span>
+              </button>
+            ) : (
+              <button className="send-btn" type="button" aria-label="发送" disabled={!canSend} onClick={handleSend}>
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M14.536 21.686a.5.5 0 0 0 .937-.024l6.5-19a.496.496 0 0 0-.635-.635l-19 6.5a.5.5 0 0 0-.024.937l7.93 3.18a2 2 0 0 1 1.112 1.11z" />
+                  <path d="m21.854 2.147-10.94 10.939" />
+                </svg>
+                <span>发送</span>
+              </button>
+            )}
           </div>
           <div className="input-hint">Enter发送，Shift+Enter换行</div>
         </div>

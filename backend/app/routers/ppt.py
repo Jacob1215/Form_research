@@ -13,7 +13,7 @@ import time
 import logging
 
 from fastapi import APIRouter, Depends, HTTPException
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.responses import FileResponse, StreamingResponse, Response
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -23,6 +23,7 @@ from ..models import KnowledgeBase, PptRecord
 from ..schemas import PptChatRequest, PptRecordCreate
 from ..security import decrypt
 from ..rag_service import retrieve_with_hybrid, _build_structured_context
+from ..ppt_styles import get_style_prompt
 from .. import ppt_master_client
 # 复用报告路由的纯函数（SSE 格式 / 启用大模型 / 附件侧车读取）
 from .report import _sse, _get_active_llm, _read_doc_sidecar
@@ -151,11 +152,12 @@ def _stream_ppt(req: PptChatRequest):
         doc_texts = _gather_doc_texts(req)
         brief = _build_brief(req, context_block, doc_texts)
         title = (req.title or "").strip()
+        style_prompt = get_style_prompt(req.style)
 
         # 提交 ppt-master 容器任务
         yield _sse({"type": "progress", "message": "正在提交 PPT 生成任务..."})
         try:
-            task_id = ppt_master_client.generate(brief, title, base_url, api_key, model)
+            task_id = ppt_master_client.generate(brief, title, base_url, api_key, model, style_prompt, req.page_count)
         except Exception as e:  # noqa: BLE001
             logger.error("提交 ppt-master 任务失败：%s", e)
             yield _sse({"type": "error", "message": f"提交 PPT 生成任务失败：{e}"})
@@ -188,6 +190,9 @@ def _stream_ppt(req: PptChatRequest):
             yield _sse({"type": "error", "message": msg or "PPT 生成失败"})
             return
 
+        pages = st.get("pages", [])
+        preview_count = st.get("preview_count", 0)
+
         # 下载产物并落盘到本地 out/ 目录（下载与历史记录都读本地文件，不依赖容器保留）
         try:
             content = ppt_master_client.download(task_id)
@@ -205,7 +210,12 @@ def _stream_ppt(req: PptChatRequest):
             yield _sse({"type": "error", "message": f"保存 PPT 失败：{e}"})
             return
 
-        yield _sse({"type": "ppt_file", "download_url": f"/api/ppt/download/{task_id}"})
+        yield _sse({
+            "type": "ppt_file",
+            "download_url": f"/api/ppt/download/{task_id}",
+            "pages": pages,
+            "preview_count": preview_count,
+        })
         yield _sse({"type": "done"})
     except Exception as e:  # noqa: BLE001
         logger.exception("PPT SSE 处理异常")
@@ -242,6 +252,20 @@ def download_ppt(task_id: str):
         media_type="application/vnd.openxmlformats-officedocument.presentationml.presentation",
         filename=f"{task_id}.pptx",
     )
+
+
+# ---------- pptx 预览 ----------
+
+@router.get("/preview/{task_id}/{index}")
+def preview_ppt(task_id: str, index: int):
+    """代理容器生成的第 index 张幻灯片 SVG 预览图（V1.2.7）。"""
+    if not _TASK_ID_RE.fullmatch(task_id) or index < 0 or index > 500:
+        raise HTTPException(status_code=404, detail="预览不存在")
+    try:
+        svg = ppt_master_client.get_preview(task_id, index)
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(status_code=404, detail="预览不存在") from e
+    return Response(content=svg, media_type="image/svg+xml")
 
 
 # ---------- PPT 记录（手动保存） ----------

@@ -279,6 +279,10 @@ class PptChatRequest(BaseModel):
     # kb_id 允许为空（不选知识库，纯文本编制）
     kb_id: Optional[int] = None
     title: Optional[str] = None
+    # V1.2.7：生成风格 id（research/minimal/scifi；None/空 = 默认自由设计）
+    style: Optional[str] = None
+    # V1.2.7：页数限制（恰好 N 页；None/空 = 不限制）
+    page_count: Optional[int] = None
     # V1.2.5：限定检索的规范（文档）ID 列表；None/空 = 搜整个知识库
     doc_ids: Optional[list[int]] = None
     messages: list[ReportMessage] = Field(..., min_length=1)

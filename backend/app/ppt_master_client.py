@@ -29,14 +29,16 @@ def _post(path: str, payload: dict) -> dict:
     return resp.json()
 
 
-def generate(brief: str, title: str, base_url: str, api_key: str, model: str) -> str:
-    """提交生成任务，返回 task_id。"""
+def generate(brief: str, title: str, base_url: str, api_key: str, model: str, style: str = "", page_count: int | None = None) -> str:
+    """提交生成任务，返回 task_id。style 为视觉风格提示词文本（空 = 不注入）。"""
     data = _post("/generate", {
         "brief": brief,
         "title": title,
         "base_url": base_url,
         "api_key": api_key,
         "model": model,
+        "style": style,
+        "page_count": page_count,
     })
     return data["task_id"]
 
@@ -64,4 +66,17 @@ def download(task_id: str) -> bytes:
         raise RuntimeError(f"下载 PPT 失败：{e}") from e
     if resp.status_code >= 400:
         raise RuntimeError(f"下载 PPT 失败：{resp.text[:300]}")
+    return resp.content
+
+
+def get_preview(task_id: str, index: int) -> bytes:
+    """下载第 index 张幻灯片的 SVG 预览图字节。"""
+    url = f"{BASE_URL}/tasks/{task_id}/preview/{index}"
+    try:
+        resp = httpx.get(url, timeout=httpx.Timeout(connect=10.0, read=60.0, write=30.0, pool=10.0))
+    except httpx.HTTPError as e:
+        logger.error("ppt-master 预览下载失败 %s: %s", url, e)
+        raise RuntimeError(f"获取 PPT 预览失败：{e}") from e
+    if resp.status_code >= 400:
+        raise RuntimeError(f"获取 PPT 预览失败：{resp.text[:300]}")
     return resp.content

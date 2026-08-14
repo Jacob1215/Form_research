@@ -25,6 +25,7 @@ import {
   type ReportRecordItem,
   type ReportRecordDetailItem,
   type StreamHandle,
+  type PptResult,
 } from '../api'
 
 interface Attachment {
@@ -58,6 +59,25 @@ function truncateTitle(t: string, max = 18): string {
   return t.length > max ? t.slice(0, max) + '...' : t
 }
 
+// V1.2.7：可选的 PPT 生成风格
+const STYLE_OPTIONS = [
+  { id: '', label: '默认' },
+  { id: 'research', label: '科研项目汇报' },
+  { id: 'minimal', label: '简约' },
+  { id: 'scifi', label: 'AI 科幻' },
+]
+
+// V1.2.7：可选的页数限制（空 = 不限制）
+const PAGE_COUNT_OPTIONS = [
+  { id: '', label: '不限' },
+  { id: '3', label: '3 页' },
+  { id: '5', label: '5 页' },
+  { id: '8', label: '8 页' },
+  { id: '10', label: '10 页' },
+  { id: '15', label: '15 页' },
+  { id: '20', label: '20 页' },
+]
+
 export default function Ppt() {
   /* ---------- 知识库 ---------- */
   const [kbs, setKbs] = useState<KnowledgeBase[]>([])
@@ -78,8 +98,12 @@ export default function Ppt() {
   const [saving, setSaving] = useState(false)
   const [exportMsg, setExportMsg] = useState('')
   const [progress, setProgress] = useState('')
-  // V1.2.6：各 assistant 消息对应的生成结果下载地址（原生 PPTX）
-  const [pptFiles, setPptFiles] = useState<Record<string, string>>({})
+  // V1.2.6/1.2.7：各 assistant 消息对应的生成结果（下载地址 + 每页要点 + 预览数量）
+  const [pptResults, setPptResults] = useState<Record<string, PptResult>>({})
+  // V1.2.7：生成风格 id（空 = 默认自由设计）
+  const [selectedStyle, setSelectedStyle] = useState('')
+  // V1.2.7：页数限制（空 = 不限制）
+  const [pageCount, setPageCount] = useState('')
 
   /* ---------- PPT 记录 ---------- */
   const [records, setRecords] = useState<ReportRecordItem[]>([])
@@ -160,7 +184,7 @@ export default function Ppt() {
     setInput('')
     setExportMsg('')
     setProgress('')
-    setPptFiles({})
+    setPptResults({})
     setCurrentRecord(null)
     if (streamRef.current) { streamRef.current.abort(); streamRef.current = null }
     setStreaming(false)
@@ -227,11 +251,13 @@ export default function Ppt() {
     streamRef.current = streamPptChat({
       kb_id: selectedKb?.id ?? null,
       title: title.trim() || undefined,
+      style: selectedStyle || null,
+      page_count: pageCount ? Number(pageCount) : null,
       messages: history,
       doc_ids: selectedDocIds.length ? selectedDocIds : null,
       onProgress: (msg) => setProgress(msg),
-      onPptFile: (downloadUrl) => {
-        setPptFiles((prev) => ({ ...prev, [aiId]: downloadUrl }))
+      onPptFile: (result) => {
+        setPptResults((prev) => ({ ...prev, [aiId]: result }))
         setProgress('')
       },
       onDone: () => {
@@ -251,7 +277,7 @@ export default function Ppt() {
         streamRef.current = null
       },
     })
-  }, [attachments, messages, selectedKb, streaming, title, selectedDocIds])
+  }, [attachments, messages, selectedKb, streaming, title, selectedDocIds, selectedStyle, pageCount])
 
   const handleSend = () => { sendMessage(input) }
 
@@ -264,6 +290,16 @@ export default function Ppt() {
       e.preventDefault()
       handleSend()
     }
+  }
+
+  /* ----- 停止生成（V1.2.7：手动取消当前流） ----- */
+  const handleStop = () => {
+    if (streamRef.current) { streamRef.current.abort(); streamRef.current = null }
+    setStreaming(false)
+    setProgress('')
+    setMessages((prev) => prev.map((m) =>
+      m.status === 'thinking' ? { ...m, status: 'done', content: '已停止生成' } : m,
+    ))
   }
 
   /* ----- 重新生成：复用上一条用户输入（含附件文档）重发 ----- */
@@ -279,8 +315,8 @@ export default function Ppt() {
 
   /* ----- 下载 / 保存（V1.2.6：基于容器生成的原生 PPTX） ----- */
   const lastAssistant = [...messages].reverse().find((m) => m.role === 'assistant')
-  const lastPptUrl = lastAssistant ? pptFiles[lastAssistant.id] : undefined
-  const lastFileId = lastPptUrl ? lastPptUrl.split('/').pop() || '' : ''
+  const lastResult = lastAssistant ? pptResults[lastAssistant.id] : undefined
+  const lastFileId = lastResult?.downloadUrl ? lastResult.downloadUrl.split('/').pop() || '' : ''
   const canDownload = !!lastFileId && !exporting && !streaming
 
   const triggerBlobDownload = (blob: Blob, filename: string) => {
@@ -651,12 +687,59 @@ export default function Ppt() {
                               </div>
                             ) : (
                               <div className="ai-answer">
-                                {pptFiles[msg.id] ? (
-                                  <div style={{ color: '#16a34a', fontSize: '14px' }}>
-                                    ✅ PPT 已生成，点击右上角「下载pptx」下载。
-                                  </div>
+                                {pptResults[msg.id] ? (
+                                  (() => {
+                                    const r = pptResults[msg.id]
+                                    const taskId = r.downloadUrl.split('/').pop() || ''
+                                    return (
+                                      <div>
+                                        <div style={{ color: '#16a34a', fontSize: '14px', marginBottom: '8px' }}>
+                                          ✅ PPT 已生成（{r.previewCount} 页），点击右上角「下载pptx」下载。
+                                        </div>
+                                        {r.pages.length > 0 && (
+                                          <div style={{ marginBottom: '8px' }}>
+                                            <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 4 }}>每页要点</div>
+                                            {r.pages.map((p, i) => (
+                                              <div key={i} style={{ marginBottom: '6px' }}>
+                                                <div style={{ fontWeight: 600, fontSize: '14px' }}>
+                                                  {i + 1}. {p.title}
+                                                </div>
+                                                {p.points.length > 0 && (
+                                                  <ul style={{ margin: '2px 0 0 18px', padding: 0, fontSize: '13px', color: 'var(--qa-muted-foreground)' }}>
+                                                    {p.points.map((pt, j) => <li key={j}>{pt}</li>)}
+                                                  </ul>
+                                                )}
+                                              </div>
+                                            ))}
+                                          </div>
+                                        )}
+                                        {r.previewCount > 0 && (
+                                          <div>
+                                            <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 4 }}>幻灯片预览</div>
+                                            <div style={{ display: 'flex', gap: '10px', overflowX: 'auto', padding: '4px 0 8px' }}>
+                                              {Array.from({ length: r.previewCount }).map((_, i) => (
+                                                <img
+                                                  key={i}
+                                                  src={`/api/ppt/preview/${taskId}/${i}`}
+                                                  alt={`第 ${i + 1} 页`}
+                                                  style={{
+                                                    width: 280,
+                                                    height: 'auto',
+                                                    borderRadius: 8,
+                                                    flexShrink: 0,
+                                                    border: '1px solid var(--qa-border, #e5e7eb)',
+                                                    background: '#fff',
+                                                  }}
+                                                />
+                                              ))}
+                                            </div>
+                                          </div>
+                                        )}
+                                      </div>
+                                    )
+                                  })()
                                 ) : (
-                                  <span style={{ color: 'var(--qa-muted-foreground)' }}>（未生成）</span>
+                                  <span style={{ color: 'var(--qa-muted-foreground)' }}>{msg.content || '（未生成）'}</span>
                                 )}
                               </div>
                             )}
@@ -713,6 +796,30 @@ export default function Ppt() {
               </div>
             )}
 
+            {/* V1.2.7：风格 + 页数下拉 */}
+            <div style={{ display: 'flex', gap: 14, alignItems: 'center', marginBottom: 8 }}>
+              <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 13, color: 'var(--qa-muted-foreground)' }}>
+                风格
+                <select
+                  value={selectedStyle}
+                  onChange={(e) => setSelectedStyle(e.target.value)}
+                  style={{ padding: '4px 8px', borderRadius: 8, fontSize: 13, border: '1px solid var(--qa-border, #e5e7eb)', background: 'var(--qa-card, #fff)', color: 'var(--qa-foreground)' }}
+                >
+                  {STYLE_OPTIONS.map((s) => <option key={s.id || 'default'} value={s.id}>{s.label}</option>)}
+                </select>
+              </label>
+              <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 13, color: 'var(--qa-muted-foreground)' }}>
+                页数
+                <select
+                  value={pageCount}
+                  onChange={(e) => setPageCount(e.target.value)}
+                  style={{ padding: '4px 8px', borderRadius: 8, fontSize: 13, border: '1px solid var(--qa-border, #e5e7eb)', background: 'var(--qa-card, #fff)', color: 'var(--qa-foreground)' }}
+                >
+                  {PAGE_COUNT_OPTIONS.map((p) => <option key={p.id || 'none'} value={p.id}>{p.label}</option>)}
+                </select>
+              </label>
+            </div>
+
             <div className="input-wrapper" ref={inputWrapRef}>
               <input
                 ref={fileInputRef}
@@ -736,17 +843,26 @@ export default function Ppt() {
                 onChange={(e) => handleInputChange(e.target.value)}
                 onKeyDown={handleKeyDown}
               />
-              <button className="send-btn" type="button" aria-label="发送" disabled={!canSend} onClick={handleSend}>
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M14.536 21.686a.5.5 0 0 0 .937-.024l6.5-19a.496.496 0 0 0-.635-.635l-19 6.5a.5.5 0 0 0-.024.937l7.93 3.18a2 2 0 0 1 1.112 1.11z" />
-                  <path d="m21.854 2.147-10.94 10.939" />
-                </svg>
-                <span>发送</span>
-              </button>
+              {streaming ? (
+                <button className="send-btn" type="button" aria-label="停止生成" onClick={handleStop} style={{ background: '#dc2626' }}>
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
+                    <rect x="6" y="6" width="12" height="12" rx="2" />
+                  </svg>
+                  <span>停止</span>
+                </button>
+              ) : (
+                <button className="send-btn" type="button" aria-label="发送" disabled={!canSend} onClick={handleSend}>
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M14.536 21.686a.5.5 0 0 0 .937-.024l6.5-19a.496.496 0 0 0-.635-.635l-19 6.5a.5.5 0 0 0-.024.937l7.93 3.18a2 2 0 0 1 1.112 1.11z" />
+                    <path d="m21.854 2.147-10.94 10.939" />
+                  </svg>
+                  <span>发送</span>
+                </button>
+              )}
             </div>
 
             <div className="input-hint">
-              支持 docx / txt / md / pdf
+              支持 docx / txt / md / pdf · 采用 ppt-master（Claude Code）生成原生可编辑 PPTX
               {exportMsg ? ` · ${exportMsg}` : ''}
             </div>
           </div>

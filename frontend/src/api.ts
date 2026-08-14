@@ -268,7 +268,7 @@ interface StreamCallbacks {
   onError?: (err: string) => void
   onProgress?: (message: string) => void
   onReport?: (content: string) => void
-  onPptFile?: (downloadUrl: string) => void
+  onPptFile?: (result: PptResult) => void
 }
 
 function streamSSE(path: string, body: unknown, cb: StreamCallbacks): StreamHandle {
@@ -303,8 +303,14 @@ function streamSSE(path: string, body: unknown, cb: StreamCallbacks): StreamHand
       }
       case 'ppt_file': {
         // V1.2.6：ppt-master 容器生成完成，携带下载地址（原生 PPTX）
+        // V1.2.7：附带每页要点 pages 与预览数量 preview_count
         const downloadUrl = evt.download_url
-        if (typeof downloadUrl === 'string') cb.onPptFile?.(downloadUrl)
+        if (typeof downloadUrl !== 'string') break
+        cb.onPptFile?.({
+          downloadUrl,
+          pages: Array.isArray(evt.pages) ? (evt.pages as PptPage[]) : [],
+          previewCount: typeof evt.preview_count === 'number' ? evt.preview_count : 0,
+        })
         break
       }
       case 'token': {
@@ -516,22 +522,40 @@ export const deleteReportRecord = (id: string): Promise<{ ok: boolean }> =>
 /* ------------------------- PPT 制作功能（V1.2.1+；V1.2.6 接入 ppt-master 容器） ------------------------- */
 // V1.2.6：不再本地生成 Markdown，改为容器端到端生成原生 PPTX；复用报告的消息/附件/记录类型。
 
+// V1.2.7：每页要点与生成结果结构
+export interface PptPage {
+  title: string
+  points: string[]
+}
+
+export interface PptResult {
+  downloadUrl: string
+  pages: PptPage[]
+  previewCount: number
+}
+
 export interface StreamPptParams {
   kb_id: string | null
   title?: string
+  // V1.2.7：生成风格 id（research/minimal/scifi；空 = 默认自由设计）
+  style?: string | null
+  // V1.2.7：页数限制（恰好 N 页；空 = 不限制）
+  page_count?: number | null
   messages: ReportMessage[]
   // V1.2.5：限定检索的规范（文档）ID 列表；空/null/缺省 = 搜整个知识库
   doc_ids?: number[] | null
   onDone?: () => void
   onError?: (err: string) => void
   onProgress?: (message: string) => void
-  onPptFile?: (downloadUrl: string) => void
+  onPptFile?: (result: PptResult) => void
 }
 
 export function streamPptChat(params: StreamPptParams): StreamHandle {
   return streamSSE('/api/ppt/chat', {
     kb_id: params.kb_id ?? null,
     title: params.title,
+    style: params.style || null,
+    page_count: params.page_count || null,
     messages: params.messages,
     doc_ids: params.doc_ids?.length ? params.doc_ids : null,
   }, params)

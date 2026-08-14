@@ -2,7 +2,7 @@
 
 基于大语言模型的 RAG（检索增强生成）智能问答 Web 应用，专为工程规范文档知识库定向提问而设计。
 
-[![Version](https://img.shields.io/badge/version-V1.2.6-blue.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-V1.2.7-blue.svg)](CHANGELOG.md)
 [![Python](https://img.shields.io/badge/python-3.11+-3776AB.svg?style=flat&logo=python&logoColor=white)](https://www.python.org/)
 [![React](https://img.shields.io/badge/react-18-61DAFB.svg?style=flat&logo=react&logoColor=white)](https://react.dev/)
 [![Docker](https://img.shields.io/badge/docker-ready-2496ED.svg?style=flat&logo=docker&logoColor=white)](https://www.docker.com/)
@@ -363,6 +363,13 @@ docker compose up -d
 </details>
 
 ## 📝 版本历史
+
+### V1.2.7 (2026-08-14)
+- 🔄 **切换界面不打断对话**：前台对话 / 报告 / PPT 三个界面改为「常驻 + 显隐」，切换 tab 不卸载页面，进行中的流式输出持续保留；各界面新增「停止」按钮，仅手动停止才中断
+- 📄 **PPT 每页要点**：生成完成后回复中按页列出标题与要点（容器解析 claude 末尾的 `PAGES_JSON`）
+- 🖼️ **PPT 预览**：回复中横向滚动展示幻灯片缩略图（复用 `svg_output/*.svg`，经 `/api/ppt/preview/{id}/{i}` 惰性加载）
+- 🎨 **PPT 生成风格**：自编「科研项目汇报 / 简约 / AI 科幻」3 种视觉风格（`ppt_styles.py`），界面新增风格选择按钮
+- ℹ️ **ppt-master 说明**：界面提示本功能采用 ppt-master（Claude Code）生成原生可编辑 PPTX
 
 ### V1.2.6 (2026-08-13)
 - 📽️ **PPT 制作接入 ppt-master**：删除本地「大模型两阶段生成 Markdown → python-pptx 导出」旧链路，改为下载 [hugohe3/ppt-master](https://github.com/hugohe3/ppt-master.git) 包装为独立 Docker 容器，由容器内 Claude Code + ppt-master skill 端到端生成**原生可编辑 PPTX**（SVG → DrawingML，质量门禁 0 阻塞错误）
